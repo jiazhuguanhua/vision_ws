@@ -1,0 +1,27 @@
+# Build folders
+build/
+devel/
+
+# IDE files
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Logs
+*.log
+
+# Backup files
+*~
+*.swp
+*.swo
+
+# ROS specific
+*.bag
