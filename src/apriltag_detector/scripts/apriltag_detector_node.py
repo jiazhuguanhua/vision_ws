@@ -11,10 +11,12 @@ import numpy as np
 import yaml
 import os
 import apriltag
+from datetime import datetime
 from cv_bridge import CvBridge, CvBridgeError
 from sensor_msgs.msg import Image, CameraInfo
 from geometry_msgs.msg import PoseStamped, Point32
 from common_msgs.msg import AprilTagDetection
+from std_msgs.msg import Bool
 import tf.transformations as tf_trans
 
 
@@ -51,6 +53,13 @@ class AprilTagDetector:
         # 调试图像保存路径
         self.debug_image_counter = 0
         
+        # 激光控制状态
+        self.laser_fired_tags = set()  # 记录已经发射过激光的Tag ID
+        self.last_laser_fire_time = None
+        
+        # 检查图片保存文件夹大小
+        self.check_image_folder_size()
+        
         rospy.loginfo("AprilTag Detector initialized successfully")
     
     def load_config(self):
@@ -62,9 +71,47 @@ class AprilTagDetector:
             with open(config_path, 'r') as file:
                 self.config = yaml.safe_load(file)
             rospy.loginfo(f"Config loaded from: {config_path}")
+            
+            # 从ROS参数覆盖配置
+            self.override_config_from_params()
+            
         except Exception as e:
             rospy.logerr(f"Failed to load config: {e}")
             self.config = self.get_default_config()
+    
+    def override_config_from_params(self):
+        """从ROS参数覆盖配置"""
+        try:
+            # 检查是否有图片保存参数
+            if rospy.has_param('~save_images'):
+                save_images = rospy.get_param('~save_images', True)
+                if 'debug' not in self.config:
+                    self.config['debug'] = {}
+                self.config['debug']['save_images'] = save_images
+                rospy.loginfo(f"Image saving override from ROS param: {save_images}")
+            
+            # 检查激光控制参数
+            if rospy.has_param('~enable_laser'):
+                enable_laser = rospy.get_param('~enable_laser', False)
+                if 'apriltag_detector' not in self.config:
+                    self.config['apriltag_detector'] = {}
+                if 'laser_control' not in self.config['apriltag_detector']:
+                    self.config['apriltag_detector']['laser_control'] = {}
+                self.config['apriltag_detector']['laser_control']['enable_laser'] = enable_laser
+                rospy.loginfo(f"Laser control override from ROS param: {enable_laser}")
+            
+            # 检查置信度阈值参数
+            if rospy.has_param('~min_confidence'):
+                min_confidence = rospy.get_param('~min_confidence', 25.0)
+                if 'apriltag_detector' not in self.config:
+                    self.config['apriltag_detector'] = {}
+                if 'laser_control' not in self.config['apriltag_detector']:
+                    self.config['apriltag_detector']['laser_control'] = {}
+                self.config['apriltag_detector']['laser_control']['min_confidence'] = min_confidence
+                rospy.loginfo(f"Min confidence override from ROS param: {min_confidence}")
+                
+        except Exception as e:
+            rospy.logwarn(f"Error overriding config from ROS params: {e}")
     
     def get_default_config(self):
         """获取默认配置"""
@@ -92,6 +139,19 @@ class AprilTagDetector:
                     'debug_image': True,
                     'pose_topic': '/apriltag/pose',
                     'debug_image_topic': '/apriltag/debug_image'
+                },
+                'laser_control': {
+                    'enable_laser': False,        # 是否启用激光控制
+                    'target_tag_ids': [0],        # 目标Tag ID列表
+                    'min_confidence': 25.0,       # 最小置信度阈值
+                    'fire_once_per_tag': True,    # 每个Tag只发射一次
+                    'fire_cooldown': 5.0          # 发射冷却时间(秒)
+                }
+            },
+            'ros_topics': {
+                'sensors': {
+                    'camera_image': '/usb_cam/image_raw',
+                    'camera_info': '/usb_cam/camera_info'
                 }
             },
             'debug': {
@@ -128,10 +188,15 @@ class AprilTagDetector:
     
     def init_ros_communication(self):
         """初始化ROS通信"""
+        # 从配置文件获取相机话题，如果没有则使用默认USB摄像头话题
+        camera_topics = self.config.get('ros_topics', {}).get('sensors', {})
+        image_topic = camera_topics.get('camera_image', '/usb_cam/image_raw')
+        camera_info_topic = camera_topics.get('camera_info', '/usb_cam/camera_info')
+        
         # 订阅者
-        self.image_sub = rospy.Subscriber("/camera/infra1/image_rect_raw", 
+        self.image_sub = rospy.Subscriber(image_topic, 
                                         Image, self.image_callback, queue_size=1)
-        self.camera_info_sub = rospy.Subscriber("/camera/infra1/camera_info", 
+        self.camera_info_sub = rospy.Subscriber(camera_info_topic, 
                                               CameraInfo, self.camera_info_callback)
         
         # 发布者
@@ -140,6 +205,14 @@ class AprilTagDetector:
         self.pose_pub = rospy.Publisher(
             self.config['apriltag_detector']['publish']['pose_topic'], 
             PoseStamped, queue_size=10)
+        
+        # 激光控制发布者
+        if self.config['apriltag_detector']['laser_control']['enable_laser']:
+            self.laser_fire_pub = rospy.Publisher("/laser_fire", Bool, queue_size=10)
+            rospy.loginfo("🔥 Laser control enabled - will fire on target detection")
+        else:
+            self.laser_fire_pub = None
+            rospy.loginfo("🚫 Laser control disabled")
         
         if self.config['apriltag_detector']['publish']['debug_image']:
             self.debug_image_pub = rospy.Publisher(
@@ -256,6 +329,9 @@ class AprilTagDetector:
                 
                 rospy.loginfo(f"AprilTag detected: ID={detection.tag_id}, "
                             f"confidence={detection.decision_margin:.3f}")
+                
+                # 检查是否需要发射激光
+                self.check_laser_fire(detection)
             
             # 发布检测结果
             self.detection_pub.publish(detection_msg)
@@ -271,6 +347,69 @@ class AprilTagDetector:
                 
         except Exception as e:
             rospy.logerr(f"Error in AprilTag detection: {e}")
+    
+    def check_laser_fire(self, detection):
+        """检查是否需要发射激光"""
+        # 检查激光控制是否启用
+        if not self.config['apriltag_detector']['laser_control']['enable_laser']:
+            return
+        
+        if self.laser_fire_pub is None:
+            return
+        
+        laser_config = self.config['apriltag_detector']['laser_control']
+        
+        # 检查是否是目标Tag
+        if detection.tag_id not in laser_config['target_tag_ids']:
+            return
+        
+        # 检查置信度
+        if detection.decision_margin < laser_config['min_confidence']:
+            rospy.logdebug(f"Tag {detection.tag_id} confidence {detection.decision_margin:.1f} "
+                          f"below threshold {laser_config['min_confidence']}")
+            return
+        
+        # 检查是否已经为这个Tag发射过激光
+        if laser_config['fire_once_per_tag'] and detection.tag_id in self.laser_fired_tags:
+            rospy.logdebug(f"Already fired laser for tag {detection.tag_id}")
+            return
+        
+        # 检查冷却时间
+        current_time = rospy.Time.now()
+        if (self.last_laser_fire_time is not None and 
+            (current_time - self.last_laser_fire_time).to_sec() < laser_config['fire_cooldown']):
+            rospy.logdebug("Laser fire cooldown active")
+            return
+        
+        # 发射激光！
+        self.fire_laser(detection)
+    
+    def fire_laser(self, detection):
+        """发射激光"""
+        try:
+            # 发送激光发射命令
+            laser_cmd = Bool()
+            laser_cmd.data = True
+            self.laser_fire_pub.publish(laser_cmd)
+            
+            # 更新状态
+            laser_config = self.config['apriltag_detector']['laser_control']
+            if laser_config['fire_once_per_tag']:
+                self.laser_fired_tags.add(detection.tag_id)
+            
+            self.last_laser_fire_time = rospy.Time.now()
+            
+            rospy.logwarn(f"🔥🎯 LASER FIRED! Target: Tag {detection.tag_id}, "
+                         f"confidence: {detection.decision_margin:.1f}")
+            
+        except Exception as e:
+            rospy.logerr(f"Error firing laser: {e}")
+    
+    def reset_laser_state(self):
+        """重置激光状态（例如任务重启时调用）"""
+        self.laser_fired_tags.clear()
+        self.last_laser_fire_time = None
+        rospy.loginfo("🔄 Laser state reset - ready for new targets")
     
     def calculate_tag_pose(self, detection, header):
         """计算AprilTag的3D位姿"""
@@ -425,13 +564,20 @@ class AprilTagDetector:
     def save_debug_image(self, image, detections):
         """保存调试图像"""
         try:
+            # 检查是否启用图片保存
+            if not self.config.get('debug', {}).get('save_images', False):
+                return
+                
             save_path = self.config['debug']['image_save_path']
             if not os.path.exists(save_path):
                 os.makedirs(save_path)
             
             debug_image = self.draw_debug_image(image, detections)
             
-            filename = f"apriltag_detection_{self.debug_image_counter:04d}.jpg"
+            # 生成带时间码的文件名
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]  # 精确到毫秒
+            tag_ids = "_".join([str(det.tag_id) for det in detections])
+            filename = f"apriltag_{timestamp}_tags{tag_ids}_{self.debug_image_counter:04d}.jpg"
             filepath = os.path.join(save_path, filename)
             
             cv2.imwrite(filepath, debug_image)
@@ -441,6 +587,57 @@ class AprilTagDetector:
             
         except Exception as e:
             rospy.logerr(f"Error saving debug image: {e}")
+    
+    def check_image_folder_size(self):
+        """检查图片保存文件夹大小"""
+        try:
+            # 如果图片保存功能关闭，则跳过检查
+            if not self.config.get('debug', {}).get('save_images', False):
+                return
+                
+            save_path = self.config['debug']['image_save_path']
+            
+            # 如果文件夹不存在，直接返回
+            if not os.path.exists(save_path):
+                return
+            
+            # 计算文件夹总大小
+            total_size = 0
+            file_count = 0
+            
+            for dirpath, dirnames, filenames in os.walk(save_path):
+                for filename in filenames:
+                    if filename.lower().endswith(('.jpg', '.jpeg', '.png', '.bmp')):
+                        filepath = os.path.join(dirpath, filename)
+                        try:
+                            total_size += os.path.getsize(filepath)
+                            file_count += 1
+                        except OSError:
+                            continue
+            
+            # 转换为GB
+            size_gb = total_size / (1024 ** 3)
+            
+            if size_gb > 1.0:  # 如果超过1GB则发出警告
+                rospy.logwarn("=" * 60)
+                rospy.logwarn("图片文件夹大小警告 - Image Folder Size Warning")
+                rospy.logwarn("=" * 60)
+                rospy.logwarn(f"图片保存路径: {save_path}")
+                rospy.logwarn(f"文件夹总大小: {size_gb:.2f} GB")
+                rospy.logwarn(f"图片文件数量: {file_count} 个")
+                rospy.logwarn(f"平均文件大小: {(total_size / file_count / 1024):.1f} KB" if file_count > 0 else "N/A")
+                rospy.logwarn("")
+                rospy.logwarn("建议操作:")
+                rospy.logwarn(f"  1. 手动删除旧图片: rm -rf {save_path}/*")
+                rospy.logwarn(f"  2. 或者移动到其他位置备份")
+                rospy.logwarn(f"  3. 或者在配置文件中关闭图片保存功能")
+                rospy.logwarn("  4. 可以定期清理以节省存储空间")
+                rospy.logwarn("=" * 60)
+            else:
+                rospy.loginfo(f"图片文件夹大小: {size_gb:.3f} GB ({file_count} 个文件)")
+                
+        except Exception as e:
+            rospy.logwarn(f"检查图片文件夹大小时出错: {e}")
     
     def run(self):
         """主运行循环"""

@@ -1,0 +1,64 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Complete Mission System: USB Camera + AprilTag Detection + Laser Control -->
+  
+  <!-- 系统参数配置 -->
+  <arg name="config_file" default="$(find flight_control)/config/mission_config.yaml" />
+  
+  <!-- 摄像头参数 -->
+  <arg name="camera_device" default="/dev/video0" />
+  <arg name="image_width" default="640" />
+  <arg name="image_height" default="480" />
+  <arg name="framerate" default="15" />
+  
+  <!-- AprilTag参数 -->
+  <arg name="save_images" default="true" />
+  <arg name="enable_laser" default="true" />
+  <arg name="target_tag_ids" default="[0,1,2,3,4,5,6,7,8,9,10]" />
+  <arg name="min_confidence" default="25.0" />
+  
+  <!-- 激光控制参数 -->
+  <arg name="gpio_pin" default="18" /> <!-- GPIO-BCM引脚 -->
+  <arg name="active_high" default="true" />
+  <arg name="fire_duration" default="1.0" />
+  
+  <!-- 1. USB摄像头节点 -->
+  <node name="usb_cam" pkg="usb_cam" type="usb_cam_node" output="screen">
+    <param name="video_device" value="$(arg camera_device)" />
+    <param name="image_width" value="$(arg image_width)" />
+    <param name="image_height" value="$(arg image_height)" />
+    <param name="pixel_format" value="yuyv" />
+    <param name="camera_frame_id" value="usb_cam" />
+    <param name="io_method" value="mmap"/>
+    <param name="autoexposure" value="false" />
+    <param name="exposure" value="100" />
+    <param name="framerate" value="$(arg framerate)" />
+  </node>
+  
+  <!-- 2. AprilTag检测器节点 -->
+  <node pkg="apriltag_detector" 
+        type="apriltag_detector_node.py" 
+        name="apriltag_detector" 
+        output="screen">
+    
+    <param name="config_file" value="$(arg config_file)" />
+    <param name="save_images" value="$(arg save_images)" />
+    <param name="enable_laser" value="$(arg enable_laser)" />
+    <param name="min_confidence" value="$(arg min_confidence)" />
+    
+  </node>
+  
+  <!-- 3. 激光控制器节点 -->
+  <node pkg="laser_control" 
+        type="laser_control_node.py" 
+        name="laser_controller" 
+        output="screen">
+    
+    <param name="config_file" value="$(arg config_file)" />
+    <param name="gpio_pin" value="$(arg gpio_pin)" />
+    <param name="active_high" value="$(arg active_high)" />
+    <param name="fire_duration" value="$(arg fire_duration)" />
+    
+  </node>
+  
+</launch>

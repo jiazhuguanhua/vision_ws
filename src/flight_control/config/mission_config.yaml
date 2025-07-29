@@ -55,6 +55,14 @@ apriltag_detector:
     debug_image: true  # 是否发布调试图像
     pose_topic: "/apriltag/pose"
     debug_image_topic: "/apriltag/debug_image"
+  
+  # 激光控制配置
+  laser_control:
+    enable_laser: true            # 是否启用激光控制
+    target_tag_ids: [0,1,2,3,4,5,6,7,8,9,10]          # 目标Tag ID列表 (任务区tag)
+    min_confidence: 25.0          # 最小置信度阈值
+    fire_once_per_tag: true       # 每个Tag只发射一次
+    fire_cooldown: 3.0            # 发射冷却时间(秒)
 
 # 激光控制参数
 laser_control:
@@ -118,8 +126,8 @@ ros_topics:
   
   # 传感器话题
   sensors:
-    camera_image: "/camera/infra1/image_rect_raw"
-    camera_info: "/camera/infra1/camera_info"
+    camera_image: "/usb_cam/image_raw"
+    camera_info: "/usb_cam/camera_info"
     odometry: "/camera/odom/sample"
   
   # 自定义话题

@@ -1,0 +1,45 @@
+<?xml version="1.1"?>
+<launch>
+  <!-- AprilTag Detector Node for Mission System with USB Camera -->
+  
+  <!-- 参数配置 -->
+  <arg name="config_file" default="$(find flight_control)/config/mission_config.yaml" />
+  <arg name="debug" default="false" />
+  <arg name="launch_prefix" default="" />
+  <arg name="camera_device" default="/dev/video0" />
+  <arg name="image_width" default="1920" />
+  <arg name="image_height" default="1080" />
+  <arg name="save_images" default="true" />
+  <arg name="framerate" default="10" />
+  <!-- USB摄像头节点 -->
+  <node name="usb_cam" pkg="usb_cam" type="usb_cam_node" output="screen">
+    <param name="video_device" value="$(arg camera_device)" />
+    <param name="image_width" value="$(arg image_width)" />
+    <param name="image_height" value="$(arg image_height)" />
+    <param name="pixel_format" value="yuyv" />
+    <param name="camera_frame_id" value="usb_cam" />
+    <param name="io_method" value="mmap"/>
+    <param name="autoexposure" value="false" />
+    <param name="exposure" value="100" />
+    <param name="framerate" value="$(arg framerate)" />
+  </node>
+  
+  <!-- 图像处理节点（可选，用于图像矫正） -->
+  <node name="image_proc" pkg="image_proc" type="image_proc" ns="usb_cam" output="screen" />
+  
+  <!-- AprilTag检测器节点 -->
+  <node pkg="apriltag_detector" 
+        type="apriltag_detector_node.py" 
+        name="apriltag_detector" 
+        output="screen"
+        launch-prefix="$(arg launch_prefix)">
+    
+    <!-- 配置文件参数 -->
+    <param name="config_file" value="$(arg config_file)" />
+    
+    <!-- 图片保存控制参数 -->
+    <param name="save_images" value="$(arg save_images)" />
+    
+  </node>
+  
+</launch>

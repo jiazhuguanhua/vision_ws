@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
 Laser Control Node for Autonomous Drone Mission System
-Author: AI Assistant
-Description: 控制激光发射器，支持GPIO和串口控制
+Description: 控制激光发射器，支持GPIO控制
 """
 
 import rospy
@@ -20,13 +19,7 @@ except ImportError:
     GPIO_AVAILABLE = False
     rospy.logwarn("RPi.GPIO not available, using simulation mode")
 
-# 尝试导入串口库
-try:
-    import serial
-    SERIAL_AVAILABLE = True
-except ImportError:
-    SERIAL_AVAILABLE = False
-    rospy.logwarn("pyserial not available")
+# GPIO是唯一的控制方式，串口控制已被废弃（25.7.2ccommit）
 
 
 class LaserController:
@@ -45,8 +38,8 @@ class LaserController:
         self.fire_timer = None
         self.safety_timer = None
         
-        # 控制方式
-        self.control_method = self.determine_control_method()
+        # 控制方式 - 只支持GPIO
+        self.control_method = "GPIO" if GPIO_AVAILABLE else "Simulation"
         
         # 初始化硬件控制
         self.init_hardware_control()
@@ -65,9 +58,37 @@ class LaserController:
             with open(config_path, 'r') as file:
                 self.config = yaml.safe_load(file)
             rospy.loginfo(f"Config loaded from: {config_path}")
+            
+            # 从ROS参数覆盖配置
+            self.override_config_from_params()
+            
         except Exception as e:
             rospy.logerr(f"Failed to load config: {e}")
             self.config = self.get_default_config()
+    
+    def override_config_from_params(self):
+        """从ROS参数覆盖配置"""
+        try:
+            # GPIO引脚覆盖
+            if rospy.has_param('~gpio_pin'):
+                gpio_pin = rospy.get_param('~gpio_pin', 18)
+                self.config['laser_control']['gpio']['pin'] = gpio_pin
+                rospy.loginfo(f"GPIO pin override from ROS param: {gpio_pin}")
+            
+            # 高/低电平有效覆盖
+            if rospy.has_param('~active_high'):
+                active_high = rospy.get_param('~active_high', True)
+                self.config['laser_control']['gpio']['active_high'] = active_high
+                rospy.loginfo(f"Active high override from ROS param: {active_high}")
+            
+            # 发射持续时间覆盖
+            if rospy.has_param('~fire_duration'):
+                fire_duration = rospy.get_param('~fire_duration', 3.0)
+                self.config['laser_control']['laser']['fire_duration'] = fire_duration
+                rospy.loginfo(f"Fire duration override from ROS param: {fire_duration}")
+                
+        except Exception as e:
+            rospy.logwarn(f"Error overriding config from ROS params: {e}")
     
     def get_default_config(self):
         """获取默认配置"""
@@ -81,34 +102,16 @@ class LaserController:
                     'fire_duration': 3.0,
                     'safety_timeout': 10.0
                 },
-                'serial': {
-                    'port': '/dev/ttyUSB0',
-                    'baudrate': 9600,
-                    'on_command': 'LASER_ON\n',
-                    'off_command': 'LASER_OFF\n'
-                },
                 'topics': {
                     'fire_command': '/laser_fire'
                 }
             }
         }
     
-    def determine_control_method(self):
-        """确定控制方式"""
-        # 优先级：GPIO > Serial > Simulation
-        if GPIO_AVAILABLE:
-            return "GPIO"
-        elif SERIAL_AVAILABLE:
-            return "Serial"
-        else:
-            return "Simulation"
-    
     def init_hardware_control(self):
         """初始化硬件控制"""
         if self.control_method == "GPIO":
             self.init_gpio_control()
-        elif self.control_method == "Serial":
-            self.init_serial_control()
         else:
             self.init_simulation_control()
     
@@ -128,30 +131,6 @@ class LaserController:
             
         except Exception as e:
             rospy.logerr(f"Failed to initialize GPIO: {e}")
-            self.control_method = "Simulation"
-            self.init_simulation_control()
-    
-    def init_serial_control(self):
-        """初始化串口控制"""
-        try:
-            serial_config = self.config['laser_control']['serial']
-            
-            self.serial_port = serial.Serial(
-                port=serial_config['port'],
-                baudrate=serial_config['baudrate'],
-                timeout=1
-            )
-            
-            self.on_command = serial_config['on_command'].encode()
-            self.off_command = serial_config['off_command'].encode()
-            
-            # 确保激光关闭
-            self.serial_port.write(self.off_command)
-            
-            rospy.loginfo(f"Serial control initialized on {serial_config['port']}")
-            
-        except Exception as e:
-            rospy.logerr(f"Failed to initialize serial: {e}")
             self.control_method = "Simulation"
             self.init_simulation_control()
     
@@ -250,8 +229,6 @@ class LaserController:
         try:
             if self.control_method == "GPIO":
                 self.set_gpio_state(state)
-            elif self.control_method == "Serial":
-                self.set_serial_state(state)
             else:
                 self.set_simulation_state(state)
             
@@ -276,14 +253,6 @@ class LaserController:
         GPIO.output(self.gpio_pin, gpio_state)
         rospy.loginfo(f"GPIO pin {self.gpio_pin} set to {'HIGH' if gpio_state else 'LOW'}")
     
-    def set_serial_state(self, state):
-        """设置串口状态"""
-        command = self.on_command if state else self.off_command
-        self.serial_port.write(command)
-        self.serial_port.flush()
-        
-        rospy.loginfo(f"Serial command sent: {command.decode().strip()}")
-    
     def set_simulation_state(self, state):
         """设置仿真状态"""
         status = "ON" if state else "OFF"
@@ -306,12 +275,6 @@ class LaserController:
             if self.control_method == "GPIO" and GPIO_AVAILABLE:
                 GPIO.cleanup()
                 rospy.loginfo("GPIO cleanup completed")
-            
-            # 关闭串口
-            if self.control_method == "Serial" and hasattr(self, 'serial_port'):
-                if self.serial_port.is_open:
-                    self.serial_port.close()
-                rospy.loginfo("Serial port closed")
                 
         except Exception as e:
             rospy.logerr(f"Error during cleanup: {e}")

@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Laser Control Node for GPIO Control -->
+  
+  <!-- 参数配置 -->
+  <arg name="config_file" default="$(find flight_control)/config/mission_config.yaml" />
+  <arg name="gpio_pin" default="18" />
+  <arg name="active_high" default="true" />
+  <arg name="fire_duration" default="3.0" />
+  
+  <!-- 激光控制器节点 -->
+  <node pkg="laser_control" 
+        type="laser_control_node.py" 
+        name="laser_controller" 
+        output="screen">
+    
+    <!-- 配置文件参数 -->
+    <param name="config_file" value="$(arg config_file)" />
+    
+    <!-- GPIO参数覆盖 -->
+    <param name="gpio_pin" value="$(arg gpio_pin)" />
+    <param name="active_high" value="$(arg active_high)" />
+    <param name="fire_duration" value="$(arg fire_duration)" />
+    
+  </node>
+  
+</launch>
