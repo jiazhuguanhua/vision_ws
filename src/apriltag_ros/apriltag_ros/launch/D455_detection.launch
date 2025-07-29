@@ -1,0 +1,20 @@
+<launch>
+
+  <arg name="launch_prefix" default="" /> <!-- set to value="gdbserver localhost:10000" for remote debugging -->
+
+  <!-- Load parameters for the D455 node -->
+  <rosparam command="load" file="$(find apriltag_ros)/config/settings.yaml" ns="apriltag_front" />
+  <rosparam command="load" file="$(find apriltag_ros)/config/d455_tags.yaml" ns="apriltag_front" />
+
+  <!-- Node for D455 camera (front) -->
+  <node pkg="apriltag_ros" type="apriltag_ros_continuous_node" name="apriltag_front" clear_params="true" output="screen" launch-prefix="$(arg launch_prefix)" >
+    <!-- Remap topics for D455 -->
+    <remap from="image_rect" to="/camera/color/image_raw" />
+    <remap from="camera_info" to="/camera/color/camera_info" />
+    <param name="publish_tag_detections_image" type="bool" value="true" />
+     <remap from="tag_detections" to="/d455/tag_detections" />
+     <remap from="tag_detections_image" to="/d455/tag_detections_image" />
+  </node>
+  
+
+</launch>

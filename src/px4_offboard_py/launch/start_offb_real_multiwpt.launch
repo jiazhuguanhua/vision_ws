@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<launch>
+	<!-- USB Camera node for waypoint photography -->
+	<node name="usb_cam" pkg="usb_cam" type="usb_cam_node" output="screen">
+		<param name="video_device" value="/dev/video0" />
+		<param name="image_width" value="1920" />
+		<param name="image_height" value="1080" />
+		<param name="pixel_format" value="yuyv" />
+		<param name="camera_frame_id" value="usb_cam" />
+		<param name="io_method" value="mmap"/>
+		<param name="framerate" value="15" />
+	</node>
+
+	<!-- Our node to control the drone -->
+	<node pkg="px4_offboard_py" type="offb_node_multiwpt.py" name="px4_offboard_py" required="true" output="screen" />
+</launch>
