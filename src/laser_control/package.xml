@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>laser_control</name>
+  <version>1.0.0</version>
+  <description>Laser control package for autonomous drone mission system</description>
+  
+  <maintainer email="your_email@example.com">Your Name</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+  
+  <depend>rospy</depend>
+  <depend>std_msgs</depend>
+
+  <export>
+  </export>
+</package>

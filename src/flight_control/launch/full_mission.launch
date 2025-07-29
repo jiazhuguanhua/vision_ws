@@ -1,0 +1,98 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- 无人机自主任务系统完整启动文件 -->
+    <!-- Full Mission Launch File for Autonomous Drone System -->
+    
+    <!-- 配置文件路径 -->
+    <arg name="config_file" default="$(find flight_control)/config/mission_config.yaml"/>
+    
+    <!-- 相机命名空间 -->
+    <arg name="camera_ns" default="camera"/>
+    
+    <!-- 调试模式 -->
+    <arg name="debug" default="false"/>
+    
+    <!-- MAVROS相关参数 -->
+    <arg name="fcu_url" default="udp://:14540@127.0.0.1:14557"/>
+    <arg name="gcs_url" default=""/>
+    <arg name="tgt_system" default="1"/>
+    <arg name="tgt_component" default="1"/>
+    
+    <!-- 加载全局配置参数 -->
+    <rosparam file="$(arg config_file)" command="load"/>
+    
+    <!-- ===== MAVROS ===== -->
+    <include file="$(find mavros)/launch/px4.launch">
+        <arg name="fcu_url" value="$(arg fcu_url)"/>
+        <arg name="gcs_url" value="$(arg gcs_url)"/>
+        <arg name="tgt_system" value="$(arg tgt_system)"/>
+        <arg name="tgt_component" value="$(arg tgt_component)"/>
+    </include>
+    
+    <!-- ===== RealSense T265 Tracking Camera ===== -->
+    <!-- 注释掉，因为通常已经在其他地方启动 -->
+    <!-- 
+    <include file="$(find realsense2_camera)/launch/rs_t265.launch">
+        <arg name="camera" value="$(arg camera_ns)"/>
+    </include>
+    -->
+    
+    <!-- ===== RealSense D435i Depth Camera (可选) ===== -->
+    <!-- 如果使用D435i作为视觉相机，取消注释 -->
+    <!--
+    <include file="$(find realsense2_camera)/launch/rs_camera.launch">
+        <arg name="camera" value="camera"/>
+        <arg name="enable_depth" value="true"/>
+        <arg name="enable_color" value="true"/>
+        <arg name="enable_infra1" value="true"/>
+        <arg name="enable_infra2" value="true"/>
+    </include>
+    -->
+    
+    <!-- ===== AprilTag检测器 ===== -->
+    <node name="apriltag_detector" pkg="apriltag_detector" type="apriltag_detector_node.py" output="screen">
+        <param name="config_file" value="$(arg config_file)"/>
+        <remap from="/camera/infra1/image_rect_raw" to="/$(arg camera_ns)/infra1/image_rect_raw"/>
+        <remap from="/camera/infra1/camera_info" to="/$(arg camera_ns)/infra1/camera_info"/>
+    </node>
+    
+    <!-- ===== 激光控制器 ===== -->
+    <node name="laser_control" pkg="laser_control" type="laser_control_node.py" output="screen">
+        <param name="config_file" value="$(arg config_file)"/>
+    </node>
+    
+    <!-- ===== 精确降落控制器 ===== -->
+    <node name="precision_landing" pkg="precision_landing" type="precision_landing_node.py" output="screen">
+        <param name="config_file" value="$(arg config_file)"/>
+    </node>
+    
+    <!-- ===== 主飞行控制器 ===== -->
+    <node name="flight_control" pkg="flight_control" type="flight_control_node.py" output="screen">
+        <param name="config_file" value="$(arg config_file)"/>
+    </node>
+    
+    <!-- ===== 可选：视觉到MAVROS的位置融合 ===== -->
+    <!-- 如果需要使用T265的位置信息作为位置源 -->
+    <node name="vision_to_mavros" pkg="vision_to_mavros" type="t265_to_mavros.py" output="screen" if="$(eval arg('camera_ns') == 'camera')">
+        <remap from="/camera/odom/sample" to="/$(arg camera_ns)/odom/sample"/>
+    </node>
+    
+    <!-- ===== 调试工具 ===== -->
+    <group if="$(arg debug)">
+        <!-- RViz可视化 -->
+        <node name="rviz" pkg="rviz" type="rviz" args="-d $(find flight_control)/config/mission_visualization.rviz" if="false"/>
+        
+        <!-- rqt图像查看器 -->
+        <node name="image_view" pkg="image_view" type="image_view" args="image:=/apriltag/debug_image" if="false"/>
+        
+        <!-- rqt多功能面板 -->
+        <node name="rqt" pkg="rqt_gui" type="rqt_gui" if="false"/>
+    </group>
+    
+    <!-- ===== 监控和日志 ===== -->
+    <!-- 系统状态监控 -->
+    <node name="system_monitor" pkg="rosbag" type="record" 
+          args="-o /tmp/mission_log_ /mission/state /apriltag/detection /laser_status /mavros/state /mavros/local_position/pose" 
+          if="false"/>
+
+</launch>

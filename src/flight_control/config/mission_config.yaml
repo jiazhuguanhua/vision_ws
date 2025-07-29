@@ -1,0 +1,158 @@
+# 无人机自主任务系统配置文件
+# Mission Configuration for Autonomous Drone System
+
+# 飞行控制参数
+flight_control:
+  # 起飞参数
+  takeoff:
+    height: 2.0  # 起飞高度 (m)
+    timeout: 10.0  # 起飞超时时间 (s)
+  
+  # 航点配置
+  waypoints:
+    mission_area: [5.0, 5.0, 2.0]  # 任务区航点 [x, y, z] (m)
+    landing_area: [10.0, 0.0, 2.0]  # 降落区航点 [x, y, z] (m)
+  
+  # 飞行速度和阈值
+  flight:
+    max_velocity: 2.0  # 最大飞行速度 (m/s)
+    position_tolerance: 0.3  # 到达航点的位置容差 (m)
+    hover_time: 2.0  # 到达航点后悬停时间 (s)
+  
+  # 控制频率
+  control_rate: 20  # 控制循环频率 (Hz)
+
+# AprilTag 检测参数
+apriltag_detector:
+  # 检测配置
+  detection:
+    family: "tag36h11"  # AprilTag 家族
+    max_hamming_error: 0  # 最大汉明距离错误
+    quad_decimate: 2.0  # 四边形抽取因子
+    quad_sigma: 0.0  # 高斯模糊sigma
+    refine_edges: 1  # 边缘细化
+    decode_sharpening: 0.25  # 解码锐化
+  
+  # 相机参数 (需要根据实际相机标定结果修改)
+  camera:
+    fx: 615.0  # 焦距x
+    fy: 615.0  # 焦距y
+    cx: 320.0  # 主点x
+    cy: 240.0  # 主点y
+    k1: 0.0    # 径向畸变系数
+    k2: 0.0
+    p1: 0.0    # 切向畸变系数
+    p2: 0.0
+  
+  # Tag配置
+  tags:
+    mission_tag_id: 0  # 任务区二维码ID
+    landing_tag_id: 1  # 降落区二维码ID
+    tag_size: 0.1  # 二维码实际尺寸 (m)
+  
+  # 发布话题
+  publish:
+    debug_image: true  # 是否发布调试图像
+    pose_topic: "/apriltag/pose"
+    debug_image_topic: "/apriltag/debug_image"
+
+# 激光控制参数
+laser_control:
+  # GPIO配置 (树莓派)
+  gpio:
+    pin: 18  # GPIO引脚号
+    active_high: true  # 高电平有效
+  
+  # 激光参数
+  laser:
+    fire_duration: 3.0  # 激光发射持续时间 (s)
+    safety_timeout: 10.0  # 安全超时时间 (s)
+  
+  # 控制话题
+  topics:
+    fire_command: "/laser_fire"  # 激光控制话题
+
+# 精确降落参数
+precision_landing:
+  # PID控制器参数
+  pid:
+    x_axis:
+      kp: 0.5
+      ki: 0.0
+      kd: 0.1
+      max_output: 1.0
+    y_axis:
+      kp: 0.5
+      ki: 0.0
+      kd: 0.1
+      max_output: 1.0
+    z_axis:
+      kp: 0.3
+      ki: 0.0
+      kd: 0.05
+      max_output: 0.5
+  
+  # 降落参数
+  landing:
+    target_height: 0.3  # 目标降落高度 (m)
+    descent_rate: 0.2   # 下降速度 (m/s)
+    position_tolerance: 0.1  # 位置容差 (m)
+    final_height: 0.1   # 最终着陆高度 (m)
+  
+  # 安全参数
+  safety:
+    max_tilt_angle: 15.0  # 最大倾斜角度 (deg)
+    min_tag_area: 100     # 最小tag像素面积
+    lost_tag_timeout: 3.0 # tag丢失超时 (s)
+
+# ROS话题映射
+ros_topics:
+  # MAVROS话题
+  mavros:
+    state: "/mavros/state"
+    pose: "/mavros/local_position/pose"
+    setpoint: "/mavros/setpoint_position/local"
+    arming: "/mavros/cmd/arming"
+    set_mode: "/mavros/set_mode"
+    extended_state: "/mavros/extended_state"
+  
+  # 传感器话题
+  sensors:
+    camera_image: "/camera/infra1/image_rect_raw"
+    camera_info: "/camera/infra1/camera_info"
+    odometry: "/camera/odom/sample"
+  
+  # 自定义话题
+  custom:
+    mission_state: "/mission/state"
+    apriltag_pose: "/apriltag/pose"
+    laser_command: "/laser_fire"
+
+# 任务状态机配置
+state_machine:
+  states:
+    - "INIT"
+    - "TAKEOFF"
+    - "GOTO_MISSION"
+    - "SCAN_TAG"
+    - "LASER_FIRE"
+    - "GOTO_LANDING"
+    - "PRECISION_LAND"
+    - "LAND"
+    - "COMPLETE"
+    - "ERROR"
+  
+  timeouts:
+    takeoff: 15.0
+    goto_mission: 30.0
+    scan_tag: 20.0
+    laser_fire: 10.0
+    goto_landing: 30.0
+    precision_land: 60.0
+    land: 15.0
+
+# 调试和日志
+debug:
+  log_level: "INFO"  # DEBUG, INFO, WARN, ERROR
+  save_images: true  # 是否保存调试图像
+  image_save_path: "/home/micoair/Desktop/mission_images"
