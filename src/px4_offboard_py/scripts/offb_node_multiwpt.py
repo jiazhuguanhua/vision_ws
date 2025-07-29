@@ -1,8 +1,7 @@
+#!/usr/bin/env python3
 """
  * File: offb_node_multiwpt.py
 """
-
-#! /usr/bin/env python
 
 
 import rospy
@@ -122,7 +121,7 @@ if __name__ == "__main__":
                 cv_image = bridge.imgmsg_to_cv2(current_image, "bgr8")
                 
                 # 创建保存目录
-                save_dir = "/home/winner/Desktop"
+                save_dir = "/home/micoair/Desktop"
                 if not os.path.exists(save_dir):
                     os.makedirs(save_dir)
                 
