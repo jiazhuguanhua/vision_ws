@@ -1,34 +1,26 @@
 #!/usr/bin/env python3
 """
-Laser Control Node for Autonomous Drone Mission System
-Description: 控制激光发射器，支持GPIO控制
+Simple Laser Control Node v2.0
+Description: 激光控制器，仅支持GPIO控制
+Date: 2025-07-29
+Version: 2.0.0
 """
 
 import rospy
 import yaml
 import os
-import time
 import threading
 from std_msgs.msg import Bool
-
-# 尝试导入GPIO库（仅在树莓派上可用）
-try:
-    import RPi.GPIO as GPIO
-    GPIO_AVAILABLE = True
-except ImportError:
-    GPIO_AVAILABLE = False
-    rospy.logwarn("RPi.GPIO not available, using simulation mode")
-
-# GPIO是唯一的控制方式，串口控制已被废弃（25.7.2ccommit）
+import RPi.GPIO as GPIO
 
 
 class LaserController:
-    """激光控制器"""
+    """简单激光控制器 - 仅GPIO控制"""
     
     def __init__(self):
         """初始化激光控制器"""
         rospy.init_node('laser_control_node', anonymous=True)
-        rospy.loginfo("Laser Control Node Started")
+        rospy.loginfo("🔫 Simple Laser Control Node v2.0 Started")
         
         # 加载配置参数
         self.load_config()
@@ -36,18 +28,14 @@ class LaserController:
         # 激光状态
         self.laser_on = False
         self.fire_timer = None
-        self.safety_timer = None
         
-        # 控制方式 - 只支持GPIO
-        self.control_method = "GPIO" if GPIO_AVAILABLE else "Simulation"
-        
-        # 初始化硬件控制
-        self.init_hardware_control()
+        # 初始化GPIO控制
+        self.init_gpio_control()
         
         # 初始化ROS通信
         self.init_ros_communication()
         
-        rospy.loginfo(f"Laser Controller initialized with {self.control_method} control")
+        rospy.loginfo("✅ Laser Controller initialized")
     
     def load_config(self):
         """加载配置文件"""
@@ -55,40 +43,38 @@ class LaserController:
             config_path = rospy.get_param('~config_file', 
                                         os.path.join(os.path.dirname(__file__), 
                                                    '../config/mission_config.yaml'))
-            with open(config_path, 'r') as file:
+            with open(config_path, 'r', encoding='utf-8') as file:
                 self.config = yaml.safe_load(file)
-            rospy.loginfo(f"Config loaded from: {config_path}")
-            
-            # 从ROS参数覆盖配置
-            self.override_config_from_params()
+            rospy.loginfo(f"📋 Config loaded from: {config_path}")
             
         except Exception as e:
-            rospy.logerr(f"Failed to load config: {e}")
+            rospy.logwarn(f"⚠️ Failed to load config: {e}, using defaults")
             self.config = self.get_default_config()
+        
+        # 从ROS参数覆盖配置
+        self.override_from_params()
     
-    def override_config_from_params(self):
+    def override_from_params(self):
         """从ROS参数覆盖配置"""
-        try:
-            # GPIO引脚覆盖
-            if rospy.has_param('~gpio_pin'):
-                gpio_pin = rospy.get_param('~gpio_pin', 18)
-                self.config['laser_control']['gpio']['pin'] = gpio_pin
-                rospy.loginfo(f"GPIO pin override from ROS param: {gpio_pin}")
-            
-            # 高/低电平有效覆盖
-            if rospy.has_param('~active_high'):
-                active_high = rospy.get_param('~active_high', True)
-                self.config['laser_control']['gpio']['active_high'] = active_high
-                rospy.loginfo(f"Active high override from ROS param: {active_high}")
-            
-            # 发射持续时间覆盖
-            if rospy.has_param('~fire_duration'):
-                fire_duration = rospy.get_param('~fire_duration', 3.0)
-                self.config['laser_control']['laser']['fire_duration'] = fire_duration
-                rospy.loginfo(f"Fire duration override from ROS param: {fire_duration}")
-                
-        except Exception as e:
-            rospy.logwarn(f"Error overriding config from ROS params: {e}")
+        # GPIO引脚
+        if rospy.has_param('~gpio_pin'):
+            self.gpio_pin = rospy.get_param('~gpio_pin', 18)
+        else:
+            self.gpio_pin = self.config.get('laser_control', {}).get('gpio', {}).get('pin', 18)
+        
+        # 高/低电平有效
+        if rospy.has_param('~active_high'):
+            self.active_high = rospy.get_param('~active_high', True)
+        else:
+            self.active_high = self.config.get('laser_control', {}).get('gpio', {}).get('active_high', True)
+        
+        # 发射持续时间
+        if rospy.has_param('~fire_duration'):
+            self.fire_duration = rospy.get_param('~fire_duration', 3.0)
+        else:
+            self.fire_duration = self.config.get('laser_control', {}).get('laser', {}).get('fire_duration', 3.0)
+        
+        rospy.loginfo(f"� GPIO pin: {self.gpio_pin}, Active high: {self.active_high}, Duration: {self.fire_duration}s")
     
     def get_default_config(self):
         """获取默认配置"""
@@ -99,55 +85,46 @@ class LaserController:
                     'active_high': True
                 },
                 'laser': {
-                    'fire_duration': 3.0,
-                    'safety_timeout': 10.0
-                },
-                'topics': {
-                    'fire_command': '/laser_fire'
+                    'fire_duration': 3.0
                 }
             }
         }
     
-    def init_hardware_control(self):
-        """初始化硬件控制"""
-        if self.control_method == "GPIO":
-            self.init_gpio_control()
-        else:
-            self.init_simulation_control()
-    
     def init_gpio_control(self):
         """初始化GPIO控制"""
         try:
-            self.gpio_pin = self.config['laser_control']['gpio']['pin']
-            self.active_high = self.config['laser_control']['gpio']['active_high']
-            
+            # 设置GPIO模式
             GPIO.setmode(GPIO.BCM)
             GPIO.setup(self.gpio_pin, GPIO.OUT)
             
             # 确保激光关闭
-            GPIO.output(self.gpio_pin, GPIO.LOW if self.active_high else GPIO.HIGH)
+            self.set_gpio_pin(False)
             
-            rospy.loginfo(f"GPIO control initialized on pin {self.gpio_pin}")
+            rospy.loginfo(f"✅ GPIO initialized on pin {self.gpio_pin}")
             
         except Exception as e:
-            rospy.logerr(f"Failed to initialize GPIO: {e}")
-            self.control_method = "Simulation"
-            self.init_simulation_control()
+            rospy.logfatal(f"❌ Failed to initialize GPIO: {e}")
+            rospy.signal_shutdown("GPIO initialization failed")
     
-    def init_simulation_control(self):
-        """初始化仿真控制"""
-        rospy.loginfo("Using simulation mode for laser control")
+    def set_gpio_pin(self, state):
+        """设置GPIO引脚状态"""
+        if self.active_high:
+            gpio_state = GPIO.HIGH if state else GPIO.LOW
+        else:
+            gpio_state = GPIO.LOW if state else GPIO.HIGH
+        
+        GPIO.output(self.gpio_pin, gpio_state)
+        rospy.logdebug(f"🔌 GPIO pin {self.gpio_pin} set to {'HIGH' if gpio_state == GPIO.HIGH else 'LOW'}")
     
     def init_ros_communication(self):
         """初始化ROS通信"""
         # 订阅激光控制命令
-        fire_topic = self.config['laser_control']['topics']['fire_command']
-        self.fire_sub = rospy.Subscriber(fire_topic, Bool, self.fire_callback)
+        self.fire_sub = rospy.Subscriber('/laser_fire', Bool, self.fire_callback, queue_size=1)
         
         # 发布激光状态
-        self.status_pub = rospy.Publisher("/laser_status", Bool, queue_size=10)
+        self.status_pub = rospy.Publisher('/laser_status', Bool, queue_size=10)
         
-        rospy.loginfo("ROS communication initialized")
+        rospy.loginfo("📡 ROS communication initialized")
     
     def fire_callback(self, msg):
         """激光发射命令回调"""
@@ -159,28 +136,24 @@ class LaserController:
     def fire_laser(self):
         """发射激光"""
         if self.laser_on:
-            rospy.logwarn("Laser is already on")
+            rospy.logwarn("⚠️ Laser is already on")
             return
         
         try:
+            rospy.logwarn(f"🔥 LASER FIRED! Duration: {self.fire_duration}s")
+            
             # 启动激光
-            self.set_laser_state(True)
+            self.set_gpio_pin(True)
+            self.laser_on = True
+            self.publish_status()
             
             # 设置自动关闭定时器
-            fire_duration = self.config['laser_control']['laser']['fire_duration']
-            self.fire_timer = threading.Timer(fire_duration, self.auto_stop_laser)
+            self.fire_timer = threading.Timer(self.fire_duration, self.auto_stop_laser)
             self.fire_timer.start()
             
-            # 设置安全超时定时器
-            safety_timeout = self.config['laser_control']['laser']['safety_timeout']
-            self.safety_timer = threading.Timer(safety_timeout, self.emergency_stop_laser)
-            self.safety_timer.start()
-            
-            rospy.loginfo(f"Laser fired for {fire_duration} seconds")
-            
         except Exception as e:
-            rospy.logerr(f"Error firing laser: {e}")
-            self.emergency_stop_laser()
+            rospy.logerr(f"❌ Error firing laser: {e}")
+            self.stop_laser()
     
     def stop_laser(self):
         """停止激光"""
@@ -193,108 +166,54 @@ class LaserController:
                 self.fire_timer.cancel()
                 self.fire_timer = None
             
-            if self.safety_timer:
-                self.safety_timer.cancel()
-                self.safety_timer = None
-            
             # 关闭激光
-            self.set_laser_state(False)
+            self.set_gpio_pin(False)
+            self.laser_on = False
+            self.publish_status()
             
-            rospy.loginfo("Laser stopped")
+            rospy.loginfo("💡 Laser stopped")
             
         except Exception as e:
-            rospy.logerr(f"Error stopping laser: {e}")
+            rospy.logerr(f"❌ Error stopping laser: {e}")
     
     def auto_stop_laser(self):
         """自动停止激光（定时器回调）"""
-        rospy.loginfo("Auto-stopping laser after timeout")
+        rospy.loginfo("⏰ Auto-stopping laser after timeout")
         self.stop_laser()
     
-    def emergency_stop_laser(self):
-        """紧急停止激光（安全超时）"""
-        rospy.logwarn("Emergency laser stop - safety timeout reached!")
-        self.set_laser_state(False)
-        self.laser_on = False
-        
-        # 取消所有定时器
-        if self.fire_timer:
-            self.fire_timer.cancel()
-            self.fire_timer = None
-        if self.safety_timer:
-            self.safety_timer.cancel()
-            self.safety_timer = None
-    
-    def set_laser_state(self, state):
-        """设置激光状态"""
-        try:
-            if self.control_method == "GPIO":
-                self.set_gpio_state(state)
-            else:
-                self.set_simulation_state(state)
-            
-            self.laser_on = state
-            
-            # 发布状态
-            status_msg = Bool()
-            status_msg.data = state
-            self.status_pub.publish(status_msg)
-            
-        except Exception as e:
-            rospy.logerr(f"Error setting laser state: {e}")
-            raise
-    
-    def set_gpio_state(self, state):
-        """设置GPIO状态"""
-        if self.active_high:
-            gpio_state = GPIO.HIGH if state else GPIO.LOW
-        else:
-            gpio_state = GPIO.LOW if state else GPIO.HIGH
-        
-        GPIO.output(self.gpio_pin, gpio_state)
-        rospy.loginfo(f"GPIO pin {self.gpio_pin} set to {'HIGH' if gpio_state else 'LOW'}")
-    
-    def set_simulation_state(self, state):
-        """设置仿真状态"""
-        status = "ON" if state else "OFF"
-        rospy.loginfo(f"[SIMULATION] Laser {status}")
-    
     def publish_status(self):
-        """定期发布激光状态"""
-        status_msg = Bool()
-        status_msg.data = self.laser_on
-        self.status_pub.publish(status_msg)
+        """发布激光状态"""
+        try:
+            status_msg = Bool()
+            status_msg.data = self.laser_on
+            self.status_pub.publish(status_msg)
+        except Exception as e:
+            rospy.logwarn(f"⚠️ Error publishing status: {e}")
     
     def cleanup(self):
         """清理资源"""
         try:
+            rospy.loginfo("🧹 Cleaning up...")
+            
             # 确保激光关闭
             if self.laser_on:
-                self.emergency_stop_laser()
+                self.stop_laser()
             
             # 清理GPIO资源
-            if self.control_method == "GPIO" and GPIO_AVAILABLE:
-                GPIO.cleanup()
-                rospy.loginfo("GPIO cleanup completed")
+            GPIO.cleanup()
+            rospy.loginfo("✅ GPIO cleanup completed")
                 
         except Exception as e:
-            rospy.logerr(f"Error during cleanup: {e}")
+            rospy.logerr(f"❌ Error during cleanup: {e}")
     
     def run(self):
         """主运行循环"""
-        rospy.loginfo("Laser Controller running...")
-        
-        # 状态发布频率
-        rate = rospy.Rate(2)  # 2Hz
+        rospy.loginfo("🚀 Laser Controller running...")
         
         try:
-            while not rospy.is_shutdown():
-                self.publish_status()
-                rate.sleep()
-                
+            rospy.spin()
         except KeyboardInterrupt:
-            rospy.loginfo("Laser controller interrupted by user")
-        except Exception as e:
-            rospy.logerr(f"Error in main loop: {e}")
+            rospy.loginfo("🛑 Laser controller interrupted by user")
         finally:
             self.cleanup()
 
@@ -304,13 +223,12 @@ if __name__ == "__main__":
         controller = LaserController()
         controller.run()
     except rospy.ROSInterruptException:
-        rospy.loginfo("Laser control node interrupted")
+        rospy.loginfo("🛑 Laser control node interrupted")
     except Exception as e:
-        rospy.logerr(f"Laser control node failed: {e}")
+        rospy.logerr(f"❌ Laser control node failed: {e}")
     finally:
         # 确保清理GPIO资源
-        if GPIO_AVAILABLE:
-            try:
-                GPIO.cleanup()
-            except:
-                pass
+        try:
+            GPIO.cleanup()
+        except:
+            pass
