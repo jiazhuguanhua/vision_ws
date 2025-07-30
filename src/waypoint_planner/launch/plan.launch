@@ -1,0 +1,34 @@
+<!--
+Wildlife Patrol Waypoint Planner Launch File
+野生动物巡查航点规划启动文件 - 2D规划版本
+
+使用方法：
+roslaunch waypoint_planner plan.launch start_point:="A9B1" no_fly_zones:="A3B3 A4B3 A5B3"
+-->
+
+<launch>
+  <!-- 任务参数 -->
+  <arg name="start_point" default="A1B1" doc="起飞点坐标 (格式: A1B1, 范围: A1B1-A9B9)" />
+  <arg name="no_fly_zones" default="A3B3 A4B3 A5B3" doc="禁飞区坐标列表 (空格分隔)" />
+  <arg name="altitude" default="1.2" doc="固定飞行高度 (2D规划)" />
+  <arg name="config_file" default="$(find waypoint_planner)/config/map.yaml" doc="配置文件路径" />
+  
+  <!-- 航点规划节点 -->
+  <node name="waypoint_planner" pkg="waypoint_planner" type="planner_node.py" output="screen">
+    <param name="start_point" value="$(arg start_point)" />
+    <param name="no_fly_zones" value="$(arg no_fly_zones)" />
+    <param name="altitude" value="$(arg altitude)" />
+    <param name="config_file" value="$(arg config_file)" />
+  </node>
+  
+  <!-- RViz可视化 (默认关闭) -->
+  <arg name="rviz" default="false" doc="是否启动RViz" />
+  <node if="$(arg rviz)" name="rviz" pkg="rviz" type="rviz" 
+        args="-d $(find waypoint_planner)/config/waypoint_planner.rviz" output="screen" 
+        required="false" />
+        
+  <!-- 静态坐标变换 -->
+  <node pkg="tf2_ros" type="static_transform_publisher" name="map_broadcaster"
+        args="0 0 0 0 0 0 1 world map" />
+
+</launch>

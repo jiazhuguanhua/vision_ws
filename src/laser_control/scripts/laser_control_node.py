@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Simple Laser Control Node v2.0
-Description: 激光控制器，仅支持GPIO控制
-Date: 2025-07-29
-Version: 2.0.0
+Simple Laser Control Node v3.0
+Description: 激光控制器，支持GPIO控制和常亮模式
+Date: 2025-07-30
+Version: 3.0.0
 """
 
 import rospy
@@ -20,13 +20,14 @@ class LaserController:
     def __init__(self):
         """初始化激光控制器"""
         rospy.init_node('laser_control_node', anonymous=True)
-        rospy.loginfo("🔫 Simple Laser Control Node v2.0 Started")
+        rospy.loginfo("🔫 Simple Laser Control Node v3.0 Started")
         
         # 加载配置参数
         self.load_config()
         
         # 激光状态
         self.laser_on = False
+        self.continuous_mode = False  # 常亮模式状态
         self.fire_timer = None
         
         # 初始化GPIO控制
@@ -121,20 +122,65 @@ class LaserController:
         # 订阅激光控制命令
         self.fire_sub = rospy.Subscriber('/laser_fire', Bool, self.fire_callback, queue_size=1)
         
+        # 订阅常亮控制命令
+        self.continuous_sub = rospy.Subscriber('/laser_continuous', Bool, self.continuous_callback, queue_size=1)
+        
         # 发布激光状态
         self.status_pub = rospy.Publisher('/laser_status', Bool, queue_size=10)
         
         rospy.loginfo("📡 ROS communication initialized")
     
+    def continuous_callback(self, msg):
+        """常亮模式控制回调"""
+        self.continuous_mode = msg.data
+        
+        if self.continuous_mode:
+            # 启用常亮模式
+            rospy.loginfo("🔆 Continuous mode ENABLED - Laser ON")
+            self.cancel_fire_timer()  # 取消任何定时器
+            self.set_laser_state(True)
+        else:
+            # 关闭常亮模式
+            rospy.loginfo("🌙 Continuous mode DISABLED")
+            self.set_laser_state(False)
+    
     def fire_callback(self, msg):
         """激光发射命令回调"""
+        # 常亮模式下忽略fire命令
+        if self.continuous_mode:
+            rospy.logdebug("🔆 Fire command ignored - continuous mode active")
+            return
+            
         if msg.data:
             self.fire_laser()
         else:
             self.stop_laser()
     
+    def set_laser_state(self, state):
+        """设置激光状态（内部方法）"""
+        if state != self.laser_on:
+            self.set_gpio_pin(state)
+            self.laser_on = state
+            self.publish_status()
+            
+            if state:
+                rospy.logwarn("🔥 LASER ON")
+            else:
+                rospy.loginfo("💡 LASER OFF")
+    
+    def cancel_fire_timer(self):
+        """取消发射定时器"""
+        if self.fire_timer:
+            self.fire_timer.cancel()
+            self.fire_timer = None
+    
     def fire_laser(self):
-        """发射激光"""
+        """发射激光（定时模式）"""
+        # 常亮模式下不执行定时发射
+        if self.continuous_mode:
+            rospy.logdebug("🔆 Fire ignored - continuous mode active")
+            return
+            
         if self.laser_on:
             rospy.logwarn("⚠️ Laser is already on")
             return
@@ -143,9 +189,7 @@ class LaserController:
             rospy.logwarn(f"🔥 LASER FIRED! Duration: {self.fire_duration}s")
             
             # 启动激光
-            self.set_gpio_pin(True)
-            self.laser_on = True
-            self.publish_status()
+            self.set_laser_state(True)
             
             # 设置自动关闭定时器
             self.fire_timer = threading.Timer(self.fire_duration, self.auto_stop_laser)
@@ -156,28 +200,32 @@ class LaserController:
             self.stop_laser()
     
     def stop_laser(self):
-        """停止激光"""
+        """停止激光（定时模式）"""
+        # 常亮模式下不执行停止
+        if self.continuous_mode:
+            rospy.logdebug("🔆 Stop ignored - continuous mode active")
+            return
+            
         if not self.laser_on:
             return
         
         try:
             # 取消定时器
-            if self.fire_timer:
-                self.fire_timer.cancel()
-                self.fire_timer = None
+            self.cancel_fire_timer()
             
             # 关闭激光
-            self.set_gpio_pin(False)
-            self.laser_on = False
-            self.publish_status()
-            
-            rospy.loginfo("💡 Laser stopped")
+            self.set_laser_state(False)
             
         except Exception as e:
             rospy.logerr(f"❌ Error stopping laser: {e}")
     
     def auto_stop_laser(self):
         """自动停止激光（定时器回调）"""
+        # 常亮模式下不自动停止
+        if self.continuous_mode:
+            rospy.logdebug("🔆 Auto-stop ignored - continuous mode active")
+            return
+            
         rospy.loginfo("⏰ Auto-stopping laser after timeout")
         self.stop_laser()
     
@@ -195,9 +243,13 @@ class LaserController:
         try:
             rospy.loginfo("🧹 Cleaning up...")
             
+            # 取消定时器
+            self.cancel_fire_timer()
+            
             # 确保激光关闭
             if self.laser_on:
-                self.stop_laser()
+                self.set_gpio_pin(False)
+                self.laser_on = False
             
             # 清理GPIO资源
             GPIO.cleanup()

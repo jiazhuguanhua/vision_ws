@@ -1,0 +1,28 @@
+# Wildlife Patrol Map Configuration
+map:
+  size:
+    rows: 9    # A1-A9
+    cols: 9    # B1-B9
+  
+  # Grid cell size in meters (for visualization)
+  cell_size: 1.0
+  
+  # Origin point for coordinate system
+  origin:
+    x: 0.0
+    y: 0.0
+    z: 0.0
+
+# Default mission parameters
+mission:
+  # Default start point (can be overridden by ROS params)
+  start_point: "A1B1"
+  
+  # Default no-fly zones (can be overridden by ROS params)
+  no_fly_zones: ["A3B3", "A4B3", "A5B3"]
+  
+  # Flight altitude (constant for all waypoints)
+  altitude: 1.2
+  
+  # Path planning algorithm
+  algorithm: "astar"  # Options: "astar", "bfs", "dfs"

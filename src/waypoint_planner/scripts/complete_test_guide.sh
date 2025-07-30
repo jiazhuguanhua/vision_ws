@@ -1,0 +1,73 @@
+#!/bin/bash
+# Complete Test and Verification Script for Waypoint Planner
+
+echo "🛰️ Waypoint Planner - Complete Test & Verification"
+echo "=================================================="
+echo ""
+
+echo "🔧 1. Environment Setup:"
+echo "   cd ~/vision_ws && source devel/setup.bash"
+echo ""
+
+echo "🚀 2. Basic Test (Fixed Height 1.2m):"
+echo "   # Terminal 1: Start planner"
+echo "   roslaunch waypoint_planner plan.launch"
+echo ""
+echo "   # Terminal 2: Verify heights"
+echo "   rosrun waypoint_planner height_verifier.py"
+echo ""
+
+echo "🎯 3. No-Fly Zone Edge Safety Test:"
+echo "   # Test diagonal movement near no-fly zones"
+echo "   roslaunch waypoint_planner plan.launch start_point:=\"A2B2\" no_fly_zones:=\"A3B3 A4B3 A5B3\""
+echo ""
+
+echo "🔍 4. Height Consistency Check Commands:"
+echo "   # Check all Z coordinates are 1.2"
+echo "   rostopic echo /waypoints | grep -A1 -B1 'z:'"
+echo ""
+echo "   # Count unique altitudes"
+echo "   rostopic echo /waypoints -n1 | grep 'z:' | sort | uniq -c"
+echo ""
+
+echo "🛡️ 5. Safety Verification Commands:"
+echo "   # Manual verification of diagonal moves"
+echo "   rostopic echo /waypoints -n1 | grep -E 'x:|y:' | paste - - | head -20"
+echo ""
+
+echo "🎨 6. Visual Verification:"
+echo "   # Start with RViz to see path"
+echo "   roslaunch waypoint_planner plan.launch rviz:=true"
+echo ""
+
+echo "📊 7. Performance Test Commands:"
+echo "   # Test different scenarios"
+echo "   roslaunch waypoint_planner plan.launch start_point:=\"A1B1\" no_fly_zones:=\"A5B5\""
+echo "   roslaunch waypoint_planner plan.launch start_point:=\"A9B9\" no_fly_zones:=\"A2B2 A3B3 A4B4\""
+echo "   roslaunch waypoint_planner plan.launch start_point:=\"A5B5\" no_fly_zones:=\"A1B1 A9B9\""
+echo ""
+
+echo "✅ Expected Results:"
+echo "   - All waypoints have z = 1.2m (no exceptions)"
+echo "   - No diagonal moves that cross no-fly zone edges"
+echo "   - Closed-loop path (returns to start)"
+echo "   - All valid grid points covered"
+echo ""
+
+echo "❌ Common Issues to Check:"
+echo "   - Heights other than 1.2m (especially 1.7m)"
+echo "   - Diagonal moves like A3B3→A4B4 when A4B3 is no-fly"
+echo "   - Path not returning to start point"
+echo "   - Waypoints in no-fly zones"
+echo ""
+
+echo "🔧 Debug Commands:"
+echo "   # Node status"
+echo "   rosnode info /waypoint_planner"
+echo ""
+echo "   # Topic info"
+echo "   rostopic info /waypoints"
+echo "   rostopic hz /waypoints"
+echo ""
+echo "   # Message structure"
+echo "   rosmsg show waypoint_planner/PointArray"
