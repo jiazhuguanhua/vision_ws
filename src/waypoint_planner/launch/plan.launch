@@ -8,7 +8,7 @@ roslaunch waypoint_planner plan.launch start_point:="A9B1" no_fly_zones:="A3B3 A
 
 <launch>
   <!-- 任务参数 -->
-  <arg name="start_point" default="A1B1" doc="起飞点坐标 (格式: A1B1, 范围: A1B1-A9B9)" />
+  <arg name="start_point" default="A1B1" doc="起飞点坐标 (格式: A1B1, 范围: A1B1-A9B7)" />
   <arg name="no_fly_zones" default="A3B3 A4B3 A5B3" doc="禁飞区坐标列表 (空格分隔)" />
   <arg name="altitude" default="1.2" doc="固定飞行高度 (2D规划)" />
   <arg name="config_file" default="$(find waypoint_planner)/config/map.yaml" doc="配置文件路径" />

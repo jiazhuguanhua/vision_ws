@@ -1,463 +1,218 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
-Flight Control Node for Autonomous Drone Mission System
-Author: AI Assistant
-Description: 主飞行控制节点，负责任务状态机、起飞、航点导航等
+简单飞行控制节点 - 基础MAVROS控制
 """
 
 import rospy
-import yaml
-import os
-import math
-from enum import Enum
-from geometry_msgs.msg import PoseStamped, Point
-from mavros_msgs.msg import State, ExtendedState
-from mavros_msgs.srv import CommandBool, CommandBoolRequest, SetMode, SetModeRequest
-from std_msgs.msg import Bool
-from common_msgs.msg import MissionState, AprilTagDetection
+from math import sqrt
+from std_msgs.msg import String, Bool
+from geometry_msgs.msg import Point, PoseStamped
+from mavros_msgs.msg import State, PositionTarget
+from mavros_msgs.srv import CommandBool, SetMode
+from waypoint_planner.msg import PointArray
 
-
-class MissionStates(Enum):
-    """任务状态枚举"""
-    INIT = 0
-    TAKEOFF = 1
-    GOTO_MISSION = 2
-    SCAN_TAG = 3
-    LASER_FIRE = 4
-    GOTO_LANDING = 5
-    PRECISION_LAND = 6
-    LAND = 7
-    COMPLETE = 8
-    ERROR = 9
-
-
-class FlightController:
-    """飞行控制器主类"""
-    
+class FlightControlNode:
     def __init__(self):
-        """初始化飞行控制器"""
-        rospy.init_node('flight_control_node', anonymous=True)
-        rospy.loginfo("Flight Control Node Started")
+        rospy.init_node('flight_control', anonymous=True)
         
-        # 加载配置参数
-        self.load_config()
+        # 参数
+        self.takeoff_altitude = rospy.get_param('~takeoff_altitude', 1.2)
+        self.position_tolerance = rospy.get_param('~position_tolerance', 0.3)
+        
+        # MAVROS服务
+        rospy.wait_for_service('/mavros/cmd/arming')
+        rospy.wait_for_service('/mavros/set_mode')
+        self.arming_client = rospy.ServiceProxy('/mavros/cmd/arming', CommandBool)
+        self.set_mode_client = rospy.ServiceProxy('/mavros/set_mode', SetMode)
+        
+        # 发布者
+        self.setpoint_pub = rospy.Publisher('/mavros/setpoint_raw/local', PositionTarget, queue_size=10)
+        
+        # 订阅者
+        rospy.Subscriber('/mavros/state', State, self.state_callback)
+        rospy.Subscriber('/mavros/local_position/pose', PoseStamped, self.pose_callback)
+        rospy.Subscriber('/takeoff_command', Bool, self.takeoff_callback)
+        rospy.Subscriber('/waypoint_command', Point, self.waypoint_callback)
+        rospy.Subscriber('/ground_command', String, self.command_callback)
+        rospy.Subscriber('/waypoints', PointArray, self.waypoints_callback)
         
         # 状态变量
         self.current_state = State()
-        self.current_extended_state = ExtendedState()
         self.current_pose = PoseStamped()
-        self.apriltag_detection = AprilTagDetection()
+        self.target_position = Point()
+        self.flight_mode = "MANUAL"
+        self.mission_waypoints = []
+        self.current_waypoint_index = 0
+        self.planned_waypoints = []  # 从waypoint_planner接收的航点
         
-        # 任务状态
-        self.mission_state = MissionStates.INIT
-        self.mission_start_time = None
-        self.state_start_time = None
+        # 控制循环
+        rospy.Timer(rospy.Duration(0.1), self.control_loop)
         
-        # 目标位置
-        self.target_pose = PoseStamped()
-        self.target_pose.header.frame_id = "map"
-        
-        # 航点索引
-        self.current_waypoint_idx = 0
-        self.waypoints = [
-            self.config['flight_control']['waypoints']['mission_area'],
-            self.config['flight_control']['waypoints']['landing_area']
-        ]
-        
-        # 初始化ROS通信
-        self.init_ros_communication()
-        
-        # 控制循环频率
-        self.rate = rospy.Rate(self.config['flight_control']['control_rate'])
-        
-        rospy.loginfo("Flight Controller initialized successfully")
-    
-    def load_config(self):
-        """加载配置文件"""
-        try:
-            config_path = rospy.get_param('~config_file', 
-                                        os.path.join(os.path.dirname(__file__), 
-                                                   '../config/mission_config.yaml'))
-            with open(config_path, 'r') as file:
-                self.config = yaml.safe_load(file)
-            rospy.loginfo(f"Config loaded from: {config_path}")
-        except Exception as e:
-            rospy.logerr(f"Failed to load config: {e}")
-            # 使用默认配置
-            self.config = self.get_default_config()
-    
-    def get_default_config(self):
-        """获取默认配置"""
-        return {
-            'flight_control': {
-                'takeoff': {'height': 2.0, 'timeout': 10.0},
-                'waypoints': {
-                    'mission_area': [5.0, 5.0, 2.0],
-                    'landing_area': [10.0, 0.0, 2.0]
-                },
-                'flight': {
-                    'max_velocity': 2.0,
-                    'position_tolerance': 0.3,
-                    'hover_time': 2.0
-                },
-                'control_rate': 20
-            },
-            'state_machine': {
-                'timeouts': {
-                    'takeoff': 15.0,
-                    'goto_mission': 30.0,
-                    'scan_tag': 20.0,
-                    'laser_fire': 10.0,
-                    'goto_landing': 30.0,
-                    'precision_land': 60.0,
-                    'land': 15.0
-                }
-            }
-        }
-    
-    def init_ros_communication(self):
-        """初始化ROS通信"""
-        # 订阅者
-        self.state_sub = rospy.Subscriber("/mavros/state", State, self.state_callback)
-        self.extended_state_sub = rospy.Subscriber("/mavros/extended_state", 
-                                                 ExtendedState, self.extended_state_callback)
-        self.pose_sub = rospy.Subscriber("/mavros/local_position/pose", 
-                                       PoseStamped, self.pose_callback)
-        self.apriltag_sub = rospy.Subscriber("/apriltag/detection", 
-                                           AprilTagDetection, self.apriltag_callback)
-        
-        # 发布者
-        self.local_pos_pub = rospy.Publisher("/mavros/setpoint_position/local", 
-                                           PoseStamped, queue_size=10)
-        self.mission_state_pub = rospy.Publisher("/mission/state", 
-                                               MissionState, queue_size=10)
-        self.laser_fire_pub = rospy.Publisher("/laser_fire", Bool, queue_size=10)
-        
-        # 服务客户端
-        rospy.wait_for_service("/mavros/cmd/arming")
-        self.arming_client = rospy.ServiceProxy("/mavros/cmd/arming", CommandBool)
-        
-        rospy.wait_for_service("/mavros/set_mode")
-        self.set_mode_client = rospy.ServiceProxy("/mavros/set_mode", SetMode)
-        
-        rospy.loginfo("ROS communication initialized")
+        rospy.loginfo("飞行控制节点启动")
+        rospy.logwarn("⚠️  等待waypoint_planner提供航点数据...")
+        rospy.logwarn("请确保waypoint_planner正在运行并发布/waypoints话题")
+        rospy.logwarn("在接收到航点数据之前，巡逻和规划任务命令将被拒绝")
     
     def state_callback(self, msg):
-        """MAVROS状态回调"""
         self.current_state = msg
     
-    def extended_state_callback(self, msg):
-        """MAVROS扩展状态回调"""
-        self.current_extended_state = msg
-    
     def pose_callback(self, msg):
-        """位置回调"""
         self.current_pose = msg
     
-    def apriltag_callback(self, msg):
-        """AprilTag检测回调"""
-        self.apriltag_detection = msg
+    def takeoff_callback(self, msg):
+        if msg.data:
+            self.execute_takeoff()
     
-    def distance_to_target(self, target_pos):
-        """计算到目标点的距离"""
-        if self.current_pose.pose.position is None:
-            return float('inf')
-        
-        dx = self.current_pose.pose.position.x - target_pos[0]
-        dy = self.current_pose.pose.position.y - target_pos[1]
-        dz = self.current_pose.pose.position.z - target_pos[2]
-        
-        return math.sqrt(dx*dx + dy*dy + dz*dz)
+    def waypoint_callback(self, msg):
+        self.target_position = msg
+        self.flight_mode = "GOTO"
+        rospy.loginfo(f"前往: ({msg.x:.1f}, {msg.y:.1f}, {msg.z:.1f})")
     
-    def set_target_position(self, x, y, z):
-        """设置目标位置"""
-        self.target_pose.header.stamp = rospy.Time.now()
-        self.target_pose.pose.position.x = x
-        self.target_pose.pose.position.y = y
-        self.target_pose.pose.position.z = z
-        # 保持当前朝向
-        if self.current_pose.pose.orientation:
-            self.target_pose.pose.orientation = self.current_pose.pose.orientation
+    def command_callback(self, msg):
+        command = msg.data
+        if command == "START_PATROL":
+            self.start_patrol()
+        elif command == "RETURN_HOME":
+            self.return_home()
+        elif command == "START_PLANNED_MISSION":
+            self.start_planned_mission()
+        elif command == "CHECK_WAYPOINTS":
+            self.check_waypoints_status()
+    
+    def check_waypoints_status(self):
+        """检查航点状态"""
+        if self.planned_waypoints:
+            rospy.loginfo(f"航点状态: 已接收 {len(self.planned_waypoints)} 个规划航点")
+            rospy.loginfo("系统准备就绪，可以执行巡逻或规划任务")
         else:
-            self.target_pose.pose.orientation.w = 1.0
+            rospy.logwarn("航点状态: 未接收到任何规划航点")
+            rospy.logwarn("请先启动waypoint_planner并等待航点规划完成")
     
-    def change_flight_mode(self, mode):
-        """改变飞行模式"""
-        try:
-            set_mode_req = SetModeRequest()
-            set_mode_req.custom_mode = mode
-            
-            response = self.set_mode_client.call(set_mode_req)
-            if response.mode_sent:
-                rospy.loginfo(f"Flight mode changed to: {mode}")
-                return True
-            else:
-                rospy.logwarn(f"Failed to change flight mode to: {mode}")
-                return False
-        except Exception as e:
-            rospy.logerr(f"Service call failed: {e}")
-            return False
+    def waypoints_callback(self, msg):
+        """接收waypoint_planner规划的航点"""
+        self.planned_waypoints = msg.points
+        rospy.loginfo("=" * 50)
+        rospy.loginfo(f"✅ 成功接收规划航点: {len(self.planned_waypoints)}个")
+        rospy.loginfo(f"航点规划完成，系统准备就绪")
+        for i, wp in enumerate(self.planned_waypoints[:5]):  # 只显示前5个
+            rospy.loginfo(f"航点{i+1}: ({wp.x:.1f}, {wp.y:.1f}, {wp.z:.1f})")
+        if len(self.planned_waypoints) > 5:
+            rospy.loginfo(f"... 还有{len(self.planned_waypoints)-5}个航点")
+        rospy.loginfo("现在可以发送 START_PATROL 或 START_PLANNED_MISSION 命令")
+        rospy.loginfo("=" * 50)
     
-    def arm_vehicle(self, arm=True):
-        """解锁/上锁飞行器"""
-        try:
-            arm_cmd = CommandBoolRequest()
-            arm_cmd.value = arm
-            
-            response = self.arming_client.call(arm_cmd)
-            if response.success:
-                status = "armed" if arm else "disarmed"
-                rospy.loginfo(f"Vehicle {status}")
-                return True
-            else:
-                rospy.logwarn(f"Failed to {'arm' if arm else 'disarm'} vehicle")
-                return False
-        except Exception as e:
-            rospy.logerr(f"Arming service call failed: {e}")
-            return False
-    
-    def publish_mission_state(self):
-        """发布任务状态"""
-        msg = MissionState()
-        msg.current_state = self.mission_state.value
-        msg.state_description = self.mission_state.name
-        msg.timestamp = rospy.Time.now()
+    def execute_takeoff(self):
+        """执行起飞"""
+        rospy.loginfo("开始起飞")
         
-        # 计算任务进度
-        total_states = len(MissionStates) - 2  # 排除ERROR和COMPLETE
-        if self.mission_state == MissionStates.COMPLETE:
-            msg.progress = 100.0
-        elif self.mission_state == MissionStates.ERROR:
-            msg.progress = 0.0
+        # 切换OFFBOARD模式
+        if self.set_mode_client(0, "OFFBOARD").mode_sent:
+            rospy.loginfo("切换OFFBOARD模式")
+        
+        # 解锁
+        if self.arming_client(True).success:
+            rospy.loginfo("解锁成功")
+        
+        # 设置起飞目标
+        self.target_position.x = self.current_pose.pose.position.x
+        self.target_position.y = self.current_pose.pose.position.y
+        self.target_position.z = self.current_pose.pose.position.z + self.takeoff_altitude
+        self.flight_mode = "TAKEOFF"
+    
+    def start_patrol(self):
+        """开始巡逻 - 严格使用规划的航点"""
+        if self.planned_waypoints:
+            rospy.loginfo(f"开始规划航点巡逻 - {len(self.planned_waypoints)}个航点")
+            self.mission_waypoints = self.planned_waypoints[:]  # 复制规划的航点
+            self.current_waypoint_index = 0
+            self.flight_mode = "PATROL"
+            if self.mission_waypoints:
+                self.target_position = self.mission_waypoints[0]
+                rospy.loginfo(f"前往第一个航点: ({self.target_position.x:.1f}, {self.target_position.y:.1f}, {self.target_position.z:.1f})")
         else:
-            msg.progress = (self.mission_state.value / total_states) * 100.0
-        
-        self.mission_state_pub.publish(msg)
+            rospy.logwarn("ERROR: 没有规划航点数据！")
+            rospy.logwarn("请先启动waypoint_planner或等待航点规划完成")
+            rospy.logwarn("巡逻命令被拒绝 - 必须先有有效的航点规划")
+            return  # 直接返回，不执行任何飞行动作
     
-    def check_state_timeout(self):
-        """检查状态超时"""
-        if self.state_start_time is None:
-            return False
-        
-        elapsed = (rospy.Time.now() - self.state_start_time).to_sec()
-        timeout_key = self.mission_state.name.lower()
-        
-        if timeout_key in self.config['state_machine']['timeouts']:
-            timeout = self.config['state_machine']['timeouts'][timeout_key]
-            if elapsed > timeout:
-                rospy.logwarn(f"State {self.mission_state.name} timeout ({elapsed:.1f}s > {timeout}s)")
-                return True
-        
-        return False
-    
-    def transition_to_state(self, new_state):
-        """状态转换"""
-        rospy.loginfo(f"State transition: {self.mission_state.name} -> {new_state.name}")
-        self.mission_state = new_state
-        self.state_start_time = rospy.Time.now()
-        
-        if self.mission_start_time is None:
-            self.mission_start_time = rospy.Time.now()
-    
-    def state_machine(self):
-        """主状态机"""
-        if self.mission_state == MissionStates.INIT:
-            self.handle_init_state()
-        elif self.mission_state == MissionStates.TAKEOFF:
-            self.handle_takeoff_state()
-        elif self.mission_state == MissionStates.GOTO_MISSION:
-            self.handle_goto_mission_state()
-        elif self.mission_state == MissionStates.SCAN_TAG:
-            self.handle_scan_tag_state()
-        elif self.mission_state == MissionStates.LASER_FIRE:
-            self.handle_laser_fire_state()
-        elif self.mission_state == MissionStates.GOTO_LANDING:
-            self.handle_goto_landing_state()
-        elif self.mission_state == MissionStates.PRECISION_LAND:
-            self.handle_precision_land_state()
-        elif self.mission_state == MissionStates.LAND:
-            self.handle_land_state()
-        elif self.mission_state == MissionStates.COMPLETE:
-            self.handle_complete_state()
-        elif self.mission_state == MissionStates.ERROR:
-            self.handle_error_state()
-        
-        # 检查超时
-        if self.check_state_timeout():
-            self.transition_to_state(MissionStates.ERROR)
-    
-    def handle_init_state(self):
-        """处理初始化状态"""
-        # 等待飞控连接
-        if not self.current_state.connected:
-            rospy.loginfo_throttle(2, "Waiting for FCU connection...")
+    def start_planned_mission(self):
+        """开始执行规划的任务"""
+        if not self.planned_waypoints:
+            rospy.logerr("ERROR: 无法启动规划任务 - 没有航点数据！")
+            rospy.logerr("必须先启动waypoint_planner并接收到有效的航点规划")
+            rospy.logerr("请检查waypoint_planner是否正在运行并发布/waypoints话题")
             return
         
-        # 设置初始目标位置为当前位置
-        if self.current_pose.pose.position:
-            self.set_target_position(
-                self.current_pose.pose.position.x,
-                self.current_pose.pose.position.y,
-                self.current_pose.pose.position.z
-            )
-            
-            # 发送几个设定点以确保飞控接收
-            for _ in range(100):
-                self.local_pos_pub.publish(self.target_pose)
-                self.rate.sleep()
-                if rospy.is_shutdown():
-                    return
-            
-            rospy.loginfo("Initialization complete, ready for takeoff")
-            self.transition_to_state(MissionStates.TAKEOFF)
+        rospy.loginfo("=" * 50)
+        rospy.loginfo(f"🚀 开始执行规划任务 - {len(self.planned_waypoints)}个航点")
+        self.mission_waypoints = self.planned_waypoints[:]
+        self.current_waypoint_index = 0
+        self.flight_mode = "PLANNED_MISSION"
+        
+        if self.mission_waypoints:
+            self.target_position = self.mission_waypoints[0]
+            rospy.loginfo(f"目标: 航点1/{len(self.mission_waypoints)}: ({self.target_position.x:.1f}, {self.target_position.y:.1f}, {self.target_position.z:.1f})")
+        rospy.loginfo("=" * 50)
     
-    def handle_takeoff_state(self):
-        """处理起飞状态"""
-        takeoff_height = self.config['flight_control']['takeoff']['height']
-        
-        # 设置起飞高度
-        if self.current_pose.pose.position:
-            self.set_target_position(
-                self.current_pose.pose.position.x,
-                self.current_pose.pose.position.y,
-                takeoff_height
-            )
-        
-        # 切换到OFFBOARD模式并解锁
-        if self.current_state.mode != "OFFBOARD":
-            self.change_flight_mode("OFFBOARD")
-        
-        if not self.current_state.armed:
-            self.arm_vehicle(True)
-        
-        # 检查是否到达起飞高度
-        if (self.current_pose.pose.position and 
-            abs(self.current_pose.pose.position.z - takeoff_height) < 0.2):
-            rospy.loginfo(f"Takeoff complete at height: {self.current_pose.pose.position.z:.2f}m")
-            self.transition_to_state(MissionStates.GOTO_MISSION)
+    def return_home(self):
+        """返回起飞点"""
+        rospy.loginfo("返回起飞点")
+        self.target_position = Point(x=0, y=0, z=1.2)
+        self.flight_mode = "HOME"
     
-    def handle_goto_mission_state(self):
-        """处理前往任务区状态"""
-        mission_waypoint = self.waypoints[0]  # 任务区航点
+    def control_loop(self, event):
+        """控制循环"""
+        if not self.current_state.connected:
+            return
         
-        # 设置目标位置
-        self.set_target_position(mission_waypoint[0], mission_waypoint[1], mission_waypoint[2])
-        
-        # 检查是否到达任务区
-        distance = self.distance_to_target(mission_waypoint)
-        tolerance = self.config['flight_control']['flight']['position_tolerance']
-        
-        if distance < tolerance:
-            rospy.loginfo("Arrived at mission area")
-            self.transition_to_state(MissionStates.SCAN_TAG)
-    
-    def handle_scan_tag_state(self):
-        """处理扫描二维码状态"""
-        # 在任务区悬停，等待AprilTag检测
-        mission_waypoint = self.waypoints[0]
-        self.set_target_position(mission_waypoint[0], mission_waypoint[1], mission_waypoint[2])
-        
-        # 检查是否检测到任务区的AprilTag
-        if (self.apriltag_detection.detected and 
-            self.apriltag_detection.tag_id == 0):  # 任务区tag_id=0
-            rospy.loginfo(f"AprilTag detected! ID: {self.apriltag_detection.tag_id}")
-            self.transition_to_state(MissionStates.LASER_FIRE)
-    
-    def handle_laser_fire_state(self):
-        """处理激光发射状态"""
-        # 发送激光发射命令
-        laser_msg = Bool()
-        laser_msg.data = True
-        self.laser_fire_pub.publish(laser_msg)
-        
-        # 等待激光发射完成（由laser_control节点自动关闭）
-        fire_duration = self.config.get('laser_control', {}).get('laser', {}).get('fire_duration', 3.0)
-        elapsed = (rospy.Time.now() - self.state_start_time).to_sec()
-        
-        if elapsed > fire_duration + 1.0:  # 多等待1秒确保激光关闭
-            rospy.loginfo("Laser firing complete")
-            self.transition_to_state(MissionStates.GOTO_LANDING)
-    
-    def handle_goto_landing_state(self):
-        """处理前往降落区状态"""
-        landing_waypoint = self.waypoints[1]  # 降落区航点
-        
-        # 设置目标位置
-        self.set_target_position(landing_waypoint[0], landing_waypoint[1], landing_waypoint[2])
-        
-        # 检查是否到达降落区
-        distance = self.distance_to_target(landing_waypoint)
-        tolerance = self.config['flight_control']['flight']['position_tolerance']
-        
-        if distance < tolerance:
-            rospy.loginfo("Arrived at landing area")
-            self.transition_to_state(MissionStates.PRECISION_LAND)
-    
-    def handle_precision_land_state(self):
-        """处理精确降落状态"""
-        # 此状态由precision_landing节点接管控制
-        # 这里只需要监控降落状态
-        
-        # 检查是否接近地面
-        if (self.current_pose.pose.position and 
-            self.current_pose.pose.position.z < 0.5):
-            rospy.loginfo("Approaching ground, switching to AUTO.LAND")
-            self.transition_to_state(MissionStates.LAND)
-    
-    def handle_land_state(self):
-        """处理降落状态"""
-        # 切换到AUTO.LAND模式
-        if self.current_state.mode != "AUTO.LAND":
-            self.change_flight_mode("AUTO.LAND")
-        
-        # 检查是否已经着陆
-        if self.current_extended_state.landed_state == ExtendedState.LANDED_STATE_ON_GROUND:
-            rospy.loginfo("Vehicle landed successfully")
-            self.arm_vehicle(False)  # 上锁
-            self.transition_to_state(MissionStates.COMPLETE)
-    
-    def handle_complete_state(self):
-        """处理任务完成状态"""
-        rospy.loginfo_throttle(5, "Mission completed successfully!")
-        # 任务完成，保持此状态
-    
-    def handle_error_state(self):
-        """处理错误状态"""
-        rospy.logerr_throttle(5, "Mission in error state!")
-        # 可以在这里添加错误恢复逻辑
-        # 例如：切换到AUTO.LAND模式进行紧急降落
-        if self.current_state.mode != "AUTO.LAND":
-            self.change_flight_mode("AUTO.LAND")
-    
-    def run(self):
-        """主运行循环"""
-        rospy.loginfo("Starting mission execution...")
-        
-        while not rospy.is_shutdown():
-            try:
-                # 执行状态机
-                self.state_machine()
+        # 检查是否到达目标
+        if self.is_at_target():
+            if self.flight_mode in ["PATROL", "PLANNED_MISSION"] and self.mission_waypoints:
+                # 下一个航点
+                self.current_waypoint_index = (self.current_waypoint_index + 1) % len(self.mission_waypoints)
+                self.target_position = self.mission_waypoints[self.current_waypoint_index]
+                rospy.loginfo(f"前往航点 {self.current_waypoint_index + 1}/{len(self.mission_waypoints)}: ({self.target_position.x:.1f}, {self.target_position.y:.1f}, {self.target_position.z:.1f})")
                 
-                # 发布控制指令（除非在precision_land状态）
-                if self.mission_state != MissionStates.PRECISION_LAND:
-                    self.local_pos_pub.publish(self.target_pose)
-                
-                # 发布任务状态
-                self.publish_mission_state()
-                
-                # 控制循环频率
-                self.rate.sleep()
-                
-            except Exception as e:
-                rospy.logerr(f"Error in main loop: {e}")
-                self.transition_to_state(MissionStates.ERROR)
+                # 如果是规划任务且已完成一轮，可以选择停止
+                if self.flight_mode == "PLANNED_MISSION" and self.current_waypoint_index == 0:
+                    rospy.loginfo("规划任务完成一轮，继续循环巡逻...")
+        
+        # 发布设定点
+        self.publish_setpoint()
+    
+    def is_at_target(self):
+        """检查是否到达目标"""
+        current_pos = self.current_pose.pose.position
+        distance = sqrt(
+            (current_pos.x - self.target_position.x)**2 +
+            (current_pos.y - self.target_position.y)**2 +
+            (current_pos.z - self.target_position.z)**2
+        )
+        return distance < self.position_tolerance
+    
+    def publish_setpoint(self):
+        """发布设定点"""
+        setpoint = PositionTarget()
+        setpoint.header.stamp = rospy.Time.now()
+        setpoint.coordinate_frame = PositionTarget.FRAME_LOCAL_NED
+        
+        setpoint.type_mask = (
+            PositionTarget.IGNORE_VX | PositionTarget.IGNORE_VY | PositionTarget.IGNORE_VZ |
+            PositionTarget.IGNORE_AFX | PositionTarget.IGNORE_AFY | PositionTarget.IGNORE_AFZ |
+            PositionTarget.IGNORE_YAW_RATE
+        )
+        
+        setpoint.position.x = self.target_position.x
+        setpoint.position.y = self.target_position.y
+        setpoint.position.z = self.target_position.z
+        setpoint.yaw = 0.0
+        
+        self.setpoint_pub.publish(setpoint)
 
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     try:
-        controller = FlightController()
-        controller.run()
+        node = FlightControlNode()
+        rospy.spin()
     except rospy.ROSInterruptException:
-        rospy.loginfo("Flight control node interrupted")
-    except Exception as e:
-        rospy.logerr(f"Flight control node failed: {e}")
+        pass

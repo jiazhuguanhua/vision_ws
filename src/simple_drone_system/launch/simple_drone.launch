@@ -1,0 +1,59 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- 简单无人机系统启动文件 -->
+  
+  <!-- 通信链路节点 -->
+  <node name="link_comm" pkg="link_comm" type="link_comm_node.py" output="screen">
+    <param name="uart_port" value="/dev/ttyUSB0" />
+    <param name="uart_baudrate" value="115200" />
+  </node>
+  
+  <!-- 飞行控制节点 -->
+  <node name="flight_control" pkg="flight_control" type="flight_control_node.py" output="screen">
+    <param name="takeoff_altitude" value="1.2" />
+    <param name="position_tolerance" value="0.3" />
+  </node>
+  
+  <!-- 动物检测节点 -->
+  <node name="animal_detect" pkg="animal_detect" type="animal_detect_node.py" output="screen">
+    <param name="camera_index" value="0" />
+    <param name="detection_rate" value="2.0" />
+  </node>
+  
+  <!-- 降落模式节点 -->
+  <node name="landing_mode" pkg="landing_mode" type="landing_mode_node.py" output="screen">
+    <param name="descent_angle" value="45.0" />
+    <param name="landing_speed" value="0.5" />
+  </node>
+  
+  <!-- 现有的航点规划器 -->
+  <node name="waypoint_planner" pkg="vision_msgs" type="waypoint_planner.py" output="screen" if="$(arg waypoint_planner)">
+    <param name="grid_size" value="9" />
+    <param name="cell_size" value="5.0" />
+    <param name="default_height" value="1.2" />
+  </node>
+  <arg name="waypoint_planner" default="true" />
+  
+  <!-- 现有的激光控制器 -->
+  <node name="laser_controller" pkg="vision_msgs" type="laser_controller.py" output="screen" if="$(arg laser_controller)">
+    <param name="laser_pin" value="12" />
+    <param name="servo_x_pin" value="13" />
+    <param name="servo_y_pin" value="15" />
+  </node>
+  <arg name="laser_controller" default="true" />
+  
+  <!-- MAVROS (如果需要) -->
+  <include file="$(find mavros)/launch/px4.launch" if="$(arg mavros)">
+    <arg name="fcu_url" value="udp://:14540@127.0.0.1:14557" />
+  </include>
+  <arg name="mavros" default="false" />
+  
+  <!-- USB摄像头 -->
+  <node name="usb_cam" pkg="usb_cam" type="usb_cam_node" output="screen" if="$(arg camera)">
+    <param name="video_device" value="/dev/video0" />
+    <param name="image_width" value="640" />
+    <param name="image_height" value="480" />
+  </node>
+  <arg name="camera" default="false" />
+  
+</launch>

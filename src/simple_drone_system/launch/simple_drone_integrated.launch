@@ -1,0 +1,57 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- 简单无人机系统 - 集成航点规划 -->
+  
+  <!-- 航点规划节点 -->
+  <node name="waypoint_planner" pkg="waypoint_planner" type="planner_node.py" output="screen">
+    <param name="start_point" value="A1B1" />
+    <param name="no_fly_zones" value="A3B3 A4B3 A5B3" />
+    <param name="altitude" value="1.2" />
+  </node>
+  
+  <!-- 通信链路节点 -->
+  <node name="link_comm" pkg="link_comm" type="link_comm_node.py" output="screen">
+    <param name="uart_port" value="/dev/ttyUSB0" />
+    <param name="uart_baudrate" value="115200" />
+  </node>
+  
+  <!-- 飞行控制节点 -->
+  <node name="flight_control" pkg="flight_control" type="flight_control_node.py" output="screen">
+    <param name="takeoff_altitude" value="1.2" />
+    <param name="position_tolerance" value="0.3" />
+  </node>
+  
+  <!-- 动物检测节点 -->
+  <node name="animal_detect" pkg="animal_detect" type="animal_detect_node.py" output="screen">
+    <param name="camera_index" value="0" />
+    <param name="detection_rate" value="2.0" />
+  </node>
+  
+  <!-- 降落模式节点 -->
+  <node name="landing_mode" pkg="landing_mode" type="landing_mode_node.py" output="screen">
+    <param name="descent_angle" value="45.0" />
+    <param name="landing_speed" value="0.5" />
+  </node>
+  
+  <!-- 可选参数 -->
+  <arg name="mavros" default="false" doc="是否启动MAVROS" />
+  <arg name="camera" default="true" doc="是否启动摄像头" />
+  <arg name="rviz" default="false" doc="是否启动RViz" />
+  
+  <!-- MAVROS节点 (可选) -->
+  <include if="$(arg mavros)" file="$(find mavros)/launch/px4.launch">
+    <arg name="fcu_url" value="udp://:14540@127.0.0.1:14557" />
+  </include>
+  
+  <!-- USB摄像头节点 (可选) -->
+  <node if="$(arg camera)" name="usb_cam" pkg="usb_cam" type="usb_cam_node" output="screen">
+    <param name="video_device" value="/dev/video0" />
+    <param name="image_width" value="640" />
+    <param name="image_height" value="480" />
+  </node>
+  
+  <!-- RViz可视化 (可选) -->
+  <node if="$(arg rviz)" name="rviz" pkg="rviz" type="rviz" 
+        args="-d $(find waypoint_planner)/config/waypoint_planner.rviz" output="screen" />
+  
+</launch>

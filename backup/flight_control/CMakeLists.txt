@@ -6,13 +6,14 @@ find_package(catkin REQUIRED COMPONENTS
   std_msgs
   geometry_msgs
   mavros_msgs
-  waypoint_planner
+  common_msgs
 )
 
 catkin_package(
-  CATKIN_DEPENDS rospy std_msgs geometry_msgs mavros_msgs waypoint_planner
+  CATKIN_DEPENDS rospy std_msgs geometry_msgs mavros_msgs common_msgs
 )
 
+# Make python scripts executable
 catkin_install_python(PROGRAMS
   scripts/flight_control_node.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}

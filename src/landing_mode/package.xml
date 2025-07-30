@@ -1,8 +1,8 @@
 <?xml version="1.0"?>
 <package format="2">
-  <name>flight_control</name>
+  <name>landing_mode</name>
   <version>1.0.0</version>
-  <description>Simple flight control for drone</description>
+  <description>Simple landing control for drone</description>
 
   <maintainer email="user@example.com">User</maintainer>
   <license>MIT</license>
@@ -12,13 +12,11 @@
   <build_depend>std_msgs</build_depend>
   <build_depend>geometry_msgs</build_depend>
   <build_depend>mavros_msgs</build_depend>
-  <build_depend>waypoint_planner</build_depend>
   
   <exec_depend>rospy</exec_depend>
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>mavros_msgs</exec_depend>
-  <exec_depend>waypoint_planner</exec_depend>
 
   <export></export>
 </package>

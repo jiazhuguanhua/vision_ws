@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>simple_drone_system</name>
+  <version>1.0.0</version>
+  <description>Simple drone system launcher</description>
+
+  <maintainer email="user@example.com">User</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+  <exec_depend>link_comm</exec_depend>
+  <exec_depend>flight_control</exec_depend>
+  <exec_depend>animal_detect</exec_depend>
+  <exec_depend>landing_mode</exec_depend>
+
+  <export></export>
+</package>
