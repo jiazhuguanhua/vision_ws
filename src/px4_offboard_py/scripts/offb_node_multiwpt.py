@@ -21,6 +21,10 @@ id = "" # Only used in XTDrone
 auto_offb_and_arm = False # True: Automatically switch to OFFBOARD and arm the drone | False: manually RC switch to OFFBOARD and arm the drone
 # 定义航路点数组（可根据需要修改）
 wpts = [
+    [0, 0, 1.2],
+    [0.5,0,1.2],
+    [0.5, 0.5, 1.2],
+    [0, 0.5, 1.2],
     [0, 0, 1.2]
 ]
 
@@ -67,7 +71,6 @@ if __name__ == "__main__":
     rospy.init_node("offb_node_py")
     
     # 初始化航点相关变量
-    wpts = []
     wpt_idx = None
 
 
@@ -101,13 +104,6 @@ if __name__ == "__main__":
     while(not rospy.is_shutdown() and not current_state.connected):
         rate.sleep()
 
-    # 阻塞等待航点数据到来
-    while len(wpts) == 0 and not rospy.is_shutdown():
-        rospy.loginfo_throttle(1.0, "等待航点规划数据...")
-        rate.sleep()
-
-    if not rospy.is_shutdown():
-        rospy.loginfo(f"成功接收到{len(wpts)}个航点")
     wpt_idx = 0
 
     # 初始化第一个航点
