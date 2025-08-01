@@ -12,6 +12,8 @@ from mavros_msgs.srv import CommandBool, CommandBoolRequest, SetMode, SetModeReq
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 from waypoint_planner.msg import PointArray  # 添加航点数组消息类型
+from std_msgs.msg import Empty, String
+from animal_detect.msg import AnimalDetection  # 添加动物检测消息
 import cv2
 import os
 import math
@@ -19,7 +21,7 @@ import datetime
 
 id = "" # Only used in XTDrone
 auto_offb_and_arm = False # True: Automatically switch to OFFBOARD and arm the drone | False: manually RC switch to OFFBOARD and arm the drone
-# 定义预设的航路点数组（可根据需要修改）
+# 定义预设的航路点数组（会被收到的wpt覆盖）
 wpts = [
     [0, 0, 1.2],
     [0.5,0,1.2],
@@ -31,6 +33,9 @@ wpts = [
 current_state = State()
 current_image = None
 bridge = CvBridge()
+visited_waypoints = set()  # 记录已访问过的航点
+detection_active = False  # 动物检测状态
+latest_detection = None  # 最新的检测结果
 
 def state_cb(msg):
     global current_state
@@ -39,6 +44,18 @@ def state_cb(msg):
 def image_cb(msg):
     global current_image
     current_image = msg
+
+def animal_detection_callback(msg):
+    """处理动物检测结果"""
+    global latest_detection
+    latest_detection = msg
+    if msg.total_count > 0:
+        animal_info = []
+        for i, animal_type in enumerate(msg.animal_types):
+            animal_info.append(f"{animal_type}({msg.counts[i]})")
+        rospy.loginfo(f"🐾 检测到动物: {', '.join(animal_info)}, 总数: {msg.total_count}")
+    else:
+        rospy.loginfo("🔍 未检测到动物")
 
 
 
@@ -67,6 +84,44 @@ def waypoints_callback(msg):
     if wpt_idx is None:
         wpt_idx = 0
 
+def animal_detect_at_waypoint(wpt_idx, waypoint):
+    """在航点执行动物检测"""
+    global detection_active, latest_detection
+    
+    rospy.loginfo(f"🔍 在航点 {wpt_idx} 开始动物检测: [{waypoint[0]:.1f}, {waypoint[1]:.1f}, {waypoint[2]:.1f}]")
+    
+    # 启动动物检测
+    detection_active = True
+    start_detection_pub.publish(Empty())
+    
+    # 等待检测结果
+    detection_timeout = 5.0  # 5秒超时
+    start_time = rospy.Time.now()
+    
+    while (rospy.Time.now() - start_time).to_sec() < detection_timeout:
+        if latest_detection is not None:
+            # 检测完成，停止检测
+            stop_detection_pub.publish(Empty())
+            detection_active = False
+            
+            if latest_detection.total_count > 0:
+                rospy.loginfo(f"✅ 航点 {wpt_idx} 动物检测完成，发现 {latest_detection.total_count} 只动物")
+                # 激光控制由animal_detect包自动处理
+            else:
+                rospy.loginfo(f"✅ 航点 {wpt_idx} 动物检测完成，未发现动物")
+            
+            # 清空检测结果，准备下次检测
+            latest_detection = None
+            return True
+        
+        rospy.sleep(0.1)
+    
+    # 超时处理
+    rospy.logwarn(f"⚠️ 航点 {wpt_idx} 动物检测超时")
+    stop_detection_pub.publish(Empty())
+    detection_active = False
+    return False
+
 if __name__ == "__main__":
     rospy.init_node("offb_node_py")
     
@@ -82,6 +137,14 @@ if __name__ == "__main__":
     
     # 订阅航点规划话题
     waypoints_sub = rospy.Subscriber("/waypoints", PointArray, callback=waypoints_callback)
+    
+    # 订阅动物检测结果
+    animal_detection_sub = rospy.Subscriber("/animal_detection_result", AnimalDetection, callback=animal_detection_callback)
+    
+    # 发布动物检测控制命令
+    start_detection_pub = rospy.Publisher("/start_detection", Empty, queue_size=1)
+    stop_detection_pub = rospy.Publisher("/stop_detection", Empty, queue_size=1)
+    
     rospy.loginfo("等待航点规划数据...")
 
     local_pos_pub = rospy.Publisher(id + "/mavros/setpoint_position/local", PoseStamped, queue_size=10)
@@ -188,14 +251,19 @@ if __name__ == "__main__":
             if dist(current_pose.pose.position, wpts[wpt_idx]) < 0.1:
                 rospy.loginfo(f"到达航点: {wpts[wpt_idx]}")
                 
+                #当前航点任务载荷
+                #====================
                 # 在航点拍照
                 capture_image_at_waypoint(wpt_idx, wpts[wpt_idx])
                 
+                # 检查是否为新航点，如果是则进行动物检测
+                if wpt_idx not in visited_waypoints:
+                    visited_waypoints.add(wpt_idx)
+                    animal_detect_at_waypoint(wpt_idx, wpts[wpt_idx])
+                
+                #====================
+                
                 rospy.sleep(1.0)  # 等待1秒钟，确保到达
-                #切入当前航点任务
-                #=======================
-                在这里加入[animal_detect_at_waypoint]
-                #=======================
                 if wpt_idx < len(wpts) - 1:
                     wpt_idx += 1
                     #更新next航路点
