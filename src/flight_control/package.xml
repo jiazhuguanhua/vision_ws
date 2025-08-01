@@ -13,12 +13,20 @@
   <build_depend>geometry_msgs</build_depend>
   <build_depend>mavros_msgs</build_depend>
   <build_depend>waypoint_planner</build_depend>
+  <build_depend>sensor_msgs</build_depend>
+  <build_depend>cv_bridge</build_depend>
+  <build_depend>animal_detect</build_depend>
+  <build_depend>common_msgs</build_depend>
   
   <exec_depend>rospy</exec_depend>
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>mavros_msgs</exec_depend>
   <exec_depend>waypoint_planner</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>cv_bridge</exec_depend>
+  <exec_depend>animal_detect</exec_depend>
+  <exec_depend>common_msgs</exec_depend>
 
   <export></export>
 </package>
