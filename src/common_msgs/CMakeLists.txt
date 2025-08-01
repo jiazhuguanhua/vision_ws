@@ -12,6 +12,7 @@ add_message_files(
   FILES
   MissionState.msg
   AprilTagDetection.msg
+  LaserControl.msg
 )
 
 ## Generate added messages and services with any dependencies listed here

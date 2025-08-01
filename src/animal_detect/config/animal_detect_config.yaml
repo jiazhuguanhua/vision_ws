@@ -1,0 +1,36 @@
+# 动物检测配置文件
+animal_detect:
+  # 摄像头配置
+  camera:
+    index: 0
+    frame_id: "camera"
+    width: 640
+    height: 480
+    
+  # 模型配置
+  model:
+    path: "$(find animal_detect)/best.pt"
+    confidence_threshold: 0.5
+    detection_rate: 2.0  # Hz
+    
+  # 类别映射 (根据您的模型调整)
+  classes:
+    0: "person"
+    1: "animal"
+    2: "bird" 
+    3: "dog"
+    4: "cat"
+    5: "cow"
+    6: "sheep"
+    7: "horse"
+    8: "pig"
+    9: "deer"
+    
+  # 坐标转换参数
+  coordinate_transform:
+    # 摄像头到无人机的变换 (简化版本)
+    scale_x: 2.0  # 像素到米的缩放因子
+    scale_y: 2.0
+    offset_x: 0.0 # 摄像头中心偏移
+    offset_y: 0.0
+    camera_height: 10.0  # 无人机飞行高度(米)

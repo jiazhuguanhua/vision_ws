@@ -193,7 +193,8 @@ if __name__ == "__main__":
                 
                 rospy.sleep(1.0)  # 等待1秒钟，确保到达
                 #切入当前航点任务
-                animal_detect_at_waypoint()
+                #=======================
+                在这里加入[animal_detect_at_waypoint]
                 #=======================
                 if wpt_idx < len(wpts) - 1:
                     wpt_idx += 1
